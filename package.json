@@ -22,7 +22,7 @@
     "git-worktree"
   ],
   "bin": {
-    "questboard": "./board/worker-tools/bin/questboard.mjs"
+    "questboard": "board/worker-tools/bin/questboard.mjs"
   },
   "files": [
     "board/dispatcher/dist/**",
