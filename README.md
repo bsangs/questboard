@@ -4,7 +4,7 @@ Run multiple Claude Code agents in parallel from a local Kanban board.
 
 Each card gets its own worker branch, Git worktree, transcript, review state, and merge path — without copying your source code into questboard.
 
-![questboard demo](docs/assets/questboard-demo.gif)
+![questboard demo](https://raw.githubusercontent.com/bsangs/questboard/main/docs/assets/questboard-demo.gif)
 
 ## Why questboard?
 
