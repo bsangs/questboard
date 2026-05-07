@@ -1,0 +1,26 @@
+{
+  "name": "@questboard/dispatcher",
+  "version": "0.0.1",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && node build.mjs",
+    "start": "node dist/main.js",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@questboard/core": "workspace:*",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "eventsource": "^2.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/eventsource": "^1.1.15",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  }
+}

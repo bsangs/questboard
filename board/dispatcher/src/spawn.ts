@@ -1,0 +1,1008 @@
+/**
+ * Worker spawn — the dispatcher prepares the worktree, reads the card body,
+ * inlines it as the spawn message, and starts a `claude -p` child rooted
+ * INSIDE the worktree. Workers never touch the server, never run git
+ * worktree commands, never read .questboard/data/.
+ *
+ * The system prompt the worker sees is `questboard/board/prompts/worker.md`
+ * passed via `--append-system-prompt` (read-as-string; the file-form flag
+ * is not exposed by the CLI's --help).
+ */
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { promisify } from "node:util";
+import { parseCardMd, isConversationKind, type Comment } from "@questboard/core";
+import type { DispatcherConfig } from "./config.js";
+import type { QueueCandidate } from "./queue.js";
+import {
+  diffStatAgainstMain,
+  listPriorWipCommits,
+  prepareWorktree,
+} from "./git.js";
+// TODO(X-srv): these utilities are slated to live under
+// `questboard/board/server/src/util/`. The dispatcher is in a separate
+// package, so once X-srv lands them we'll either re-export them through
+// @questboard/core or land a thin local copy under `./util/`. Until then,
+// the local stubs below are best-effort no-ops so worker spawn keeps
+// functioning end-to-end.
+import {
+  discoverCommands,
+  type DiscoveredCommands,
+} from "./util/command-discovery.js";
+import { runInstall } from "./util/install.js";
+import {
+  composeSystemPrompt,
+  readBasePrompt,
+  readMergerPostBuildCmd,
+  readScope,
+} from "./context.js";
+
+export type WorkerRole = "worker" | "reviewer" | "merger";
+
+export interface SpawnedWorker {
+  pid: number;
+  child: ChildProcess;
+  cardId: string;
+  attempt: number;
+  startedAt: string;
+  transcriptPath: string;
+  /** Worktree the dispatcher prepared for this run. (For reviewer the
+   *  cwd is BOARD_ROOT; this still references the worker branch's tree.) */
+  worktreePath: string;
+  /** Branch the worker is committing on. */
+  wipBranch: string;
+  /** What kind of process this is. Drives exit-handler routing. */
+  role: WorkerRole;
+  /**
+   * Set the moment the exit handler starts running (i.e. child.on("exit")
+   * fired). Stays null while the worker is alive. Used by StatsReporter to
+   * detect a routeExit() that's been hung for too long — without this,
+   * `active.has(card)` would suppress the stats fallback forever.
+   */
+  exitStartedAt: number | null;
+}
+
+function nextAttempt(transcriptsDir: string): number {
+  try {
+    const files = fs.readdirSync(transcriptsDir).filter((f) => f.endsWith(".jsonl"));
+    return files.length + 1;
+  } catch {
+    return 1;
+  }
+}
+
+function fileTimestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "Z");
+}
+
+/** Read shared card conversation from comments.jsonl (conversation kinds only). */
+function readConversation(commentsFile: string): Comment[] {
+  if (!fs.existsSync(commentsFile)) return [];
+  const out: Comment[] = [];
+  for (const line of fs.readFileSync(commentsFile, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const c = JSON.parse(line) as Comment;
+      if (isConversationKind(c.kind)) out.push(c);
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return out;
+}
+
+function fmtTs(iso: string): string {
+  // Show as "YYYY-MM-DD HH:mm" in UTC for prompt readability.
+  try {
+    return iso.replace("T", " ").replace(/:\d{2}\.\d{3}Z$/, "");
+  } catch {
+    return iso;
+  }
+}
+
+function speakerLabel(c: Comment): string {
+  // For review_note we surface the reviewer's perspective with no language
+  // marker — review_note bodies are already in the card's language.
+  switch (c.kind) {
+    case "stuck":
+      return "worker";
+    case "answer":
+      return c.author === "human" ? "human" : c.author;
+    case "resumed":
+      return "system";
+    case "review_note":
+      return "reviewer";
+    default:
+      return c.author;
+  }
+}
+
+/**
+ * Format prior conversation as "## Conversation so far". Returns empty
+ * string if there's nothing useful to show — workers don't need an empty
+ * header.
+ */
+function formatConversationSection(comments: Comment[]): string {
+  if (comments.length === 0) return "";
+  const lines: string[] = [
+    "## Conversation so far",
+    "",
+    "Each entry is a message or note from a prior worker, reviewer, merger,",
+    "human, or the system. Read these in order before deciding what to do next.",
+    "The latest message is usually the most relevant.",
+    "",
+  ];
+  for (const c of comments) {
+    lines.push(`— [${speakerLabel(c)}, ${fmtTs(c.ts)}] —`);
+    lines.push(c.body.trimEnd());
+    lines.push("");
+  }
+  return lines.join("\n").replace(/\n+$/, "\n");
+}
+
+/**
+ * Resolve a spawn cwd given a base directory (worktree for workers, board
+ * root for reviewer/merger) and an optional scope-defined cwd. The scope
+ * cwd is treated as a project-relative path; it's resolved against the
+ * base and the result must remain INSIDE the base. If validation fails
+ * (escapes base, missing dir, not a dir), the function logs a warning to
+ * stdout (PM2 picks it up) and returns the base unchanged so spawning
+ * still succeeds with safe defaults.
+ *
+ * Project-stored values are POSIX-style; OS-specific separators inside
+ * the user-supplied string are tolerated by `path.resolve`.
+ */
+function resolveSpawnCwd(args: {
+  base: string;
+  scopeCwd: string | null | undefined;
+  cardId: string;
+  role: WorkerRole;
+}): string {
+  const { base, scopeCwd, cardId, role } = args;
+  if (!scopeCwd) return base;
+
+  // Reject absolute paths that aren't already under base — server should
+  // store relatives, but be defensive in case someone hand-edited config.
+  const candidate = path.isAbsolute(scopeCwd)
+    ? scopeCwd
+    : path.resolve(base, scopeCwd);
+
+  const rel = path.relative(base, candidate);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    process.stdout.write(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: "scope_cwd_outside_base",
+        card_id: cardId,
+        role,
+        scope_cwd: scopeCwd,
+        base,
+        message: "scope.cwd resolves outside base — using base instead",
+      }) + "\n",
+    );
+    return base;
+  }
+
+  let stat;
+  try {
+    stat = fs.statSync(candidate);
+  } catch {
+    process.stdout.write(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: "scope_cwd_missing",
+        card_id: cardId,
+        role,
+        scope_cwd: scopeCwd,
+        resolved: candidate,
+        message: "scope.cwd does not exist — using base instead",
+      }) + "\n",
+    );
+    return base;
+  }
+  if (!stat.isDirectory()) {
+    process.stdout.write(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: "scope_cwd_not_dir",
+        card_id: cardId,
+        role,
+        scope_cwd: scopeCwd,
+        resolved: candidate,
+        message: "scope.cwd is not a directory — using base instead",
+      }) + "\n",
+    );
+    return base;
+  }
+  return candidate;
+}
+
+/**
+ * Render the "## Previous attempts" section for an attempt > 1 spawn. Pulls
+ * prior wip-commits off `origin/<wipBranch>`, computes a diff stat for
+ * each, and appends the most recent reviewer feedback (if any). Returns
+ * "" on attempt 1 or when no prior commits exist.
+ *
+ * The goal is for the worker to see what its predecessors tried before
+ * stalling — so it doesn't blindly redo the same approach. We deliberately
+ * keep the section tight (sha + subject + diff stat + last reviewer note)
+ * rather than dumping full diffs; full diffs are too noisy and the worker
+ * can read them itself if it wants.
+ */
+async function formatPreviousAttemptsSection(args: {
+  attempt: number;
+  boardRoot: string;
+  wipBranch: string;
+  comments: Comment[];
+  baseBranch?: string | null;
+}): Promise<string> {
+  if (args.attempt <= 1) return "";
+  const commits = await listPriorWipCommits(args.boardRoot, args.wipBranch, args.baseBranch);
+  if (commits.length === 0) return "";
+
+  // Most recent reviewer feedback: prefer the last `review_note` (rejection
+  // body) — that's the canonical channel for reviewer feedback in this
+  // schema. Fall back to the last `stuck` body if no reviewer entry exists.
+  let reviewerFeedback: { ts: string; body: string } | null = null;
+  let stuckFallback: { ts: string; body: string } | null = null;
+  for (let i = args.comments.length - 1; i >= 0; i--) {
+    const c = args.comments[i];
+    if (!c) continue;
+    if (!reviewerFeedback && c.kind === "review_note") {
+      reviewerFeedback = { ts: c.ts, body: c.body };
+    }
+    if (!stuckFallback && c.kind === "stuck") {
+      stuckFallback = { ts: c.ts, body: c.body };
+    }
+    if (reviewerFeedback && stuckFallback) break;
+  }
+
+  const lines: string[] = [
+    "## Previous attempts",
+    "",
+    "Earlier attempts at this card committed `wip:` snapshots before stalling",
+    "or being rejected. Read these before deciding your approach — don't",
+    "blindly redo what's already been tried.",
+    "",
+  ];
+  for (let i = 0; i < commits.length; i++) {
+    const c = commits[i];
+    if (!c) continue;
+    lines.push(`### Attempt ${i + 1} — ${c.sha} ${c.subject}`);
+    lines.push("");
+    const stat = await diffStatAgainstMain(args.boardRoot, c.sha, 12, args.baseBranch);
+    if (stat) {
+      lines.push("```");
+      lines.push(stat);
+      lines.push("```");
+    } else {
+      lines.push("(diff stat unavailable)");
+    }
+    lines.push("");
+  }
+
+  const feedback = reviewerFeedback ?? stuckFallback;
+  if (feedback) {
+    lines.push(
+      reviewerFeedback
+        ? "### Most recent reviewer feedback"
+        : "### Most recent stuck reason",
+    );
+    lines.push("");
+    lines.push(feedback.body.trimEnd());
+    lines.push("");
+  }
+
+  return lines.join("\n").replace(/\n+$/, "\n");
+}
+
+function buildSpawnMessage(card: {
+  id: string;
+  title: string;
+  cardMd: string;
+  comments: Comment[];
+  previousAttempts: string;
+}): string {
+  const conversation = formatConversationSection(card.comments);
+  return [
+    `# Card ${card.id}: ${card.title}`,
+    "",
+    "You are working inside this card's git worktree (it's your current",
+    "working directory). The branch is already checked out and your job is",
+    "to satisfy the card description below, then commit your work and exit.",
+    "You do NOT need to read card.md or comments.jsonl — the relevant content",
+    "is already inlined here.",
+    "",
+    "## Card",
+    "",
+    card.cardMd.trim() || "(empty card.md)",
+    "",
+    conversation,
+    card.previousAttempts,
+    "When you're done: `git add -A && git commit -m \"<conventional message>\"`,",
+    "then exit. The dispatcher will push the branch and request review.",
+    "",
+    "If you cannot finish without a human decision, write your question as the",
+    "final assistant message and end it with a `STUCK: <one-line reason>`",
+    "marker on its own line. The dispatcher will commit any in-flight work,",
+    "push the branch, and surface your question on the card.",
+  ]
+    .filter((s, i, arr) => !(s === "" && arr[i - 1] === "")) // collapse double-blanks
+    .join("\n");
+}
+
+
+export async function spawnWorker(
+  card: QueueCandidate,
+  cfg: DispatcherConfig,
+): Promise<SpawnedWorker> {
+  const transcriptsDir = path.join(cfg.cardsDir, card.id, "transcripts");
+  fs.mkdirSync(transcriptsDir, { recursive: true });
+
+  const attempt = nextAttempt(transcriptsDir);
+  const ts = fileTimestamp();
+  const transcriptPath = path.join(transcriptsDir, `${ts}-attempt-${attempt}.jsonl`);
+
+  // Read card body so we can inline title + description as the spawn prompt.
+  // Worker never touches .questboard/data/ itself.
+  const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
+  const parsed = parseCardMd(cardMd);
+
+  // Prepare worktree (or reuse on resumption). Worker branches use
+  // worker/card-<id>.
+  const wipBranch = `worker/card-${card.id}`;
+  const wt = await prepareWorktree({
+    boardRoot: cfg.boardRoot,
+    worktreesDir: cfg.worktreesDir,
+    cardId: card.id,
+    branch: wipBranch,
+    baseBranch: cfg.baseBranch,
+  });
+
+  // Surface orphan-resume on the card so the human can see WHY a fresh
+  // worker is starting from non-empty state. We post via the regular
+  // comments endpoint with kind=system_event (audit channel, not
+  // conversation noise). Best-effort — failure here MUST NOT block spawn.
+  if (wt.resumedFromRemote) {
+    try {
+      const url = `${cfg.serverUrl}/api/cards/${card.id}/comments`;
+      const body = JSON.stringify({
+        author: "system",
+        kind: "system_event",
+        body: `respawn: resumed from origin/${wipBranch} (${
+          wt.resumedCommitsAhead ?? 0
+        } commit${wt.resumedCommitsAhead === 1 ? "" : "s"} preserved)`,
+      });
+      // No await — fire-and-forget; the dispatcher must not stall here.
+      void fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      }).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const rolePrompt = fs.readFileSync(cfg.promptPath, "utf8");
+  const scope = readScope(cfg, parsed.frontmatter.scope ?? null);
+  const promptText = composeSystemPrompt({
+    basePrompt: readBasePrompt(cfg),
+    scopeDescription: scope?.description ?? "",
+    rolePrompt,
+  });
+  const conversation = readConversation(
+    path.join(cfg.cardsDir, card.id, "comments.jsonl"),
+  );
+
+  // Discover commands BEFORE rendering the spawn message — the env vars
+  // we set below let the worker shell out without re-deriving the package
+  // manager. Discovery is a sync filesystem read; cheap.
+  const commands: DiscoveredCommands = discoverCommands(wt.worktreePath);
+
+  // Run install BEFORE spawning the worker. Fresh worktrees never have
+  // node_modules, so any worker that touches a JS/TS dep would fail
+  // first-step. Best-effort: log failures but don't abort the spawn —
+  // the worker can self-heal if needed.
+  if (commands.installCmd) {
+    const result = await runInstall({
+      cwd: wt.worktreePath,
+      installCmd: commands.installCmd,
+      log: (e) =>
+        process.stdout.write(
+          JSON.stringify({ ts: new Date().toISOString(), card_id: card.id, ...e }) + "\n",
+        ),
+    });
+    if (result.error) {
+      process.stdout.write(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "install_warning",
+          card_id: card.id,
+          message: `pre-spawn install reported errors (continuing): ${result.error}`,
+          exit_code: result.exitCode,
+        }) + "\n",
+      );
+    }
+  }
+
+  const previousAttempts = await formatPreviousAttemptsSection({
+    attempt,
+    boardRoot: cfg.boardRoot,
+    wipBranch,
+    comments: conversation,
+    baseBranch: cfg.baseBranch,
+  });
+
+  const spawnMessage = buildSpawnMessage({
+    id: card.id,
+    title: parsed.frontmatter.title,
+    cardMd,
+    comments: conversation,
+    previousAttempts,
+  });
+  const spawnCwd = resolveSpawnCwd({
+    base: wt.worktreePath,
+    scopeCwd: scope?.cwd,
+    cardId: card.id,
+    role: "worker",
+  });
+
+  const args: string[] = [
+    "-p",
+    // `--bare` only when running in bare auth mode; in session mode we let
+    // claude pick up the user's interactive login session. See AuthMode.
+    ...(cfg.authMode === "bare" ? ["--bare"] : []),
+    "--permission-mode",
+    "bypassPermissions",
+    "--append-system-prompt",
+    promptText,
+    "--allowed-tools",
+    "Bash,Read,Write,Edit,Grep,Glob",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    spawnMessage,
+  ];
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    // In session mode we forward NO ANTHROPIC_* env so the child uses claude's
+    // login session. In bare mode we forward only what's actually set —
+    // ANTHROPIC_BASE_URL is optional even in bare mode (claude defaults to
+    // its built-in base URL when only the API key is present).
+    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
+    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    BOARD_ROOT: cfg.boardRoot,
+    BOARD_SERVER_URL: cfg.serverUrl,
+    BOARD_DATA: cfg.boardData,
+    BOARD_WORKTREES: cfg.worktreesDir,
+    CARD_ID: card.id,
+    ATTEMPT: String(attempt),
+    // Per-project commands discovered from the worktree's lockfile +
+    // package.json. Empty strings are intentional ("no such command")
+    // so the worker can `[ -n "$BOARD_TEST_CMD" ]`-guard cleanly.
+    BOARD_INSTALL_CMD: commands.installCmd ?? "",
+    BOARD_TEST_CMD: commands.testCmd ?? "",
+    BOARD_BUILD_CMD: commands.buildCmd ?? "",
+    BOARD_TYPECHECK_CMD: commands.typecheckCmd ?? "",
+  };
+
+  // Open the transcript file ONCE and pass the raw fd to stdio. The child
+  // gets its own dup'd fd via fork/exec — when the dispatcher dies our copy
+  // of the fd closes but the child's keeps writing. With "pipe" + .pipe()
+  // the file descriptor on the read side belongs to our process; if we die,
+  // the child's next stdout write hits EPIPE and the worker is killed.
+  const transcriptFd = fs.openSync(transcriptPath, "a");
+
+  let child: ChildProcess;
+  try {
+    child = spawn("claude", args, {
+      cwd: spawnCwd,
+      env,
+      stdio: ["ignore", transcriptFd, transcriptFd],
+      // Own process group so SIGINT/SIGTERM to dispatcher (pm2 restart)
+      // doesn't propagate. Combined with the fd-stdio above, the worker
+      // truly survives a dispatcher restart.
+      detached: true,
+    });
+  } finally {
+    // Parent's fd is no longer needed regardless of spawn success.
+    try { fs.closeSync(transcriptFd); } catch { /* ignore */ }
+  }
+
+  if (typeof child.pid !== "number") {
+    throw new Error(`[dispatcher] spawn returned no pid for card ${card.id}`);
+  }
+
+  // Don't keep the dispatcher event loop tied to the child — let dispatcher
+  // exit cleanly on SIGTERM while the worker keeps running.
+  child.unref();
+
+  return {
+    pid: child.pid,
+    child,
+    cardId: card.id,
+    attempt,
+    role: "worker",
+    startedAt: new Date().toISOString(),
+    transcriptPath,
+    worktreePath: wt.worktreePath,
+    wipBranch,
+    exitStartedAt: null,
+  };
+}
+
+// ─── Reviewer spawn ─────────────────────────────────────────────────────────
+
+/** Hard cap on the injected diff payload. Bigger than this and we head-truncate
+ *  with a marker so the spawn message stays under the model's input limit. */
+const REVIEWER_DIFF_MAX_BYTES = 500_000;
+
+/**
+ * Run a git command and capture stdout. Returns null on failure (e.g. the
+ * branch hasn't been pushed yet, or fetch is offline). The reviewer message
+ * builder treats null as "context unavailable" and includes a placeholder
+ * — we never want to fail spawn just because diff hydration hiccuped.
+ */
+const execFileAsync = promisify(execFile);
+
+async function gitCapture(
+  cwd: string,
+  args: string[],
+  timeoutMs = 60_000,
+): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      timeout: timeoutMs,
+      // Diffs can be large; cap at a few MB so the buffer doesn't OOM. The
+      // injected payload is then truncated to REVIEWER_DIFF_MAX_BYTES.
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return String(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pre-compute commits + diff for the reviewer so it doesn't have to run any
+ * git commands itself (it's read-only — no Write/Edit/Bash-for-git).
+ *
+ * Steps:
+ *   1. `git fetch origin` — refresh both origin/main and origin/<wip>.
+ *   2. `git log origin/main..origin/<wip> --oneline` — commit summary.
+ *   3. `git diff origin/main...origin/<wip>` — the merge-base diff.
+ *
+ * Best-effort: any step failure returns null for that field so the reviewer
+ * still spawns with whatever context we did manage to gather.
+ */
+async function gatherReviewerGitContext(
+  boardRoot: string,
+  wipBranch: string,
+): Promise<{ commits: string | null; diff: string | null; truncated: boolean }> {
+  // Step 1 — fetch is purely a freshness step. We tolerate offline / network
+  // failure; the next two commands operate on whatever refs we have.
+  await gitCapture(boardRoot, ["fetch", "origin"]);
+
+  const base =
+    (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", "origin/main"])) !== null
+      ? "origin/main"
+      : (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", "main"])) !== null
+        ? "main"
+        : "HEAD~1";
+  const branchRef =
+    (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", `origin/${wipBranch}`])) !== null
+      ? `origin/${wipBranch}`
+      : wipBranch;
+
+  // Step 2 — commit list. Empty string is a legitimate result (branch with no
+  // new commits beyond main); distinguish from "command failed" via null.
+  const commits = await gitCapture(boardRoot, [
+    "log",
+    `${base}..${branchRef}`,
+    "--oneline",
+  ]);
+
+  // Step 3 — diff. If the buffer caps out we'd get null; in practice the 32MB
+  // maxBuffer in gitCapture is well above the eventual 500KB injection cap.
+  let diff = await gitCapture(boardRoot, [
+    "diff",
+    `${base}...${branchRef}`,
+  ]);
+
+  let truncated = false;
+  if (diff && diff.length > REVIEWER_DIFF_MAX_BYTES) {
+    // Head-truncate so the reviewer sees the start of every file in the diff
+    // (file headers, hunks for the early files). Tail bytes — usually later
+    // files — are dropped with an explicit marker so the model knows.
+    const head = diff.slice(0, REVIEWER_DIFF_MAX_BYTES);
+    const droppedBytes = diff.length - REVIEWER_DIFF_MAX_BYTES;
+    diff =
+      head +
+      `\n\n... [truncated: ${droppedBytes} more bytes; diff capped at ${REVIEWER_DIFF_MAX_BYTES} bytes]\n`;
+    truncated = true;
+  }
+
+  return { commits, diff, truncated };
+}
+
+function buildReviewerMessage(args: {
+  id: string;
+  title: string;
+  cardMd: string;
+  wipBranch: string;
+  comments: Comment[];
+  commits: string | null;
+  diff: string | null;
+  diffTruncated: boolean;
+}): string {
+  const conversation = formatConversationSection(args.comments);
+  const commitsBody =
+    args.commits === null
+      ? "(unable to compute — git fetch/log failed; treat as context unavailable)"
+      : args.commits.trim() === ""
+        ? "(no commits beyond origin/main)"
+        : args.commits.trimEnd();
+  const diffBody =
+    args.diff === null
+      ? "(unable to compute — git diff failed; treat as context unavailable)"
+      : args.diff.trim() === ""
+        ? "(empty diff — branch matches origin/main)"
+        : args.diff.trimEnd();
+  return [
+    `# Card ${args.id}: ${args.title} — REVIEW`,
+    "",
+    "You are reviewing the code changes prepared by a worker. The branch is",
+    `\`${args.wipBranch}\`. The card metadata, prior conversation, commit list,`,
+    "and full diff are inlined below — you do NOT need to read card.md /",
+    "comments.jsonl or run any git commands. You are read-only by design.",
+    "",
+    "## Card",
+    "",
+    args.cardMd.trim() || "(empty card.md)",
+    "",
+    conversation,
+    "## Commits",
+    "",
+    "```",
+    commitsBody,
+    "```",
+    "",
+    "## Diff",
+    "",
+    args.diffTruncated
+      ? "The diff was head-truncated to fit the model context. Judge what you can from the visible portion; missing tail bytes are noted at the end of the block."
+      : "Full diff between origin/main and the worker's branch.",
+    "",
+    "```diff",
+    diffBody,
+    "```",
+    "",
+    "Judge the changes against the card description's intent (and the prior",
+    "conversation, if any), and write your verdict as your final assistant",
+    "message:",
+    "",
+    "- Last line: `VERDICT: PASS` or `VERDICT: REJECT` (uppercase, exact).",
+    "- For REJECT, list specific `file:line` issues and the fix direction.",
+    "- For PASS, optionally list non-blocking notes.",
+    "- If you genuinely cannot decide and need a human, emit `VERDICT: STUCK`",
+    "  on the last line with the question/blocker spelled out above it.",
+    "",
+    "Then exit. The dispatcher will turn your verdict into either a merge,",
+    "a rejection comment + reopen, or a human-escalation.",
+  ]
+    .filter((s, i, arr) => !(s === "" && arr[i - 1] === ""))
+    .join("\n");
+}
+
+export async function spawnReviewer(
+  card: import("./queue.js").QueueCandidate,
+  cfg: DispatcherConfig,
+): Promise<SpawnedWorker> {
+  const transcriptsDir = path.join(cfg.cardsDir, card.id, "transcripts");
+  fs.mkdirSync(transcriptsDir, { recursive: true });
+
+  const attempt = nextAttempt(transcriptsDir);
+  const ts = fileTimestamp();
+  const transcriptPath = path.join(transcriptsDir, `${ts}-attempt-${attempt}-review.jsonl`);
+
+  const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
+  const parsed = parseCardMd(cardMd);
+  const wipBranch = `worker/card-${card.id}`;
+
+  const reviewerPromptPath = path.join(cfg.promptsDir, "reviewer.md");
+  const rolePrompt = fs.readFileSync(reviewerPromptPath, "utf8");
+  const scope = readScope(cfg, parsed.frontmatter.scope ?? null);
+  const promptText = composeSystemPrompt({
+    basePrompt: readBasePrompt(cfg),
+    scopeDescription: scope?.description ?? "",
+    rolePrompt,
+  });
+  const conversation = readConversation(
+    path.join(cfg.cardsDir, card.id, "comments.jsonl"),
+  );
+
+  // Pre-compute commits + diff server-side so the reviewer doesn't need any
+  // git access. With this hydrated into the spawn message, the reviewer is
+  // truly read-only — the disallowedTools below back this up at the tool
+  // level, but the data injection here is what makes the persona viable.
+  const gitCtx = await gatherReviewerGitContext(cfg.boardRoot, wipBranch);
+
+  const spawnMessage = buildReviewerMessage({
+    id: card.id,
+    title: parsed.frontmatter.title,
+    cardMd,
+    wipBranch,
+    comments: conversation,
+    commits: gitCtx.commits,
+    diff: gitCtx.diff,
+    diffTruncated: gitCtx.truncated,
+  });
+  const spawnCwd = resolveSpawnCwd({
+    base: cfg.boardRoot,
+    scopeCwd: scope?.cwd,
+    cardId: card.id,
+    role: "reviewer",
+  });
+
+  const args: string[] = [
+    "-p",
+    // See spawnWorker for auth-mode rationale.
+    ...(cfg.authMode === "bare" ? ["--bare"] : []),
+    "--permission-mode",
+    "bypassPermissions",
+    "--append-system-prompt",
+    promptText,
+    "--allowed-tools",
+    // Reviewer is read-only — no Write/Edit so it can't accidentally commit.
+    "Bash,Read,Grep,Glob",
+    // Defense in depth: even though the allowed-tools list above doesn't
+    // include any mutating tools, claude has been known to surface them
+    // anyway under permissive permission modes. Explicitly deny mutation
+    // tools so the read-only persona is enforced at the tool layer too.
+    "--disallowedTools",
+    "Write,Edit,NotebookEdit",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    spawnMessage,
+  ];
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    // See spawnWorker for auth-mode rationale.
+    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
+    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    BOARD_ROOT: cfg.boardRoot,
+    BOARD_SERVER_URL: cfg.serverUrl,
+    BOARD_DATA: cfg.boardData,
+    BOARD_WORKTREES: cfg.worktreesDir,
+    CARD_ID: card.id,
+    WIP_BRANCH: wipBranch,
+    ATTEMPT: String(attempt),
+  };
+
+  // See spawnWorker for rationale: fd-stdio + detached + unref so the
+  // reviewer survives a dispatcher restart without SIGPIPE.
+  const transcriptFd = fs.openSync(transcriptPath, "a");
+
+  let child: ChildProcess;
+  try {
+    child = spawn("claude", args, {
+      // Reviewer reads diff from main repo (no worktree). Scope.cwd may
+      // narrow this to a subdir of boardRoot.
+      cwd: spawnCwd,
+      env,
+      stdio: ["ignore", transcriptFd, transcriptFd],
+      detached: true,
+    });
+  } finally {
+    try { fs.closeSync(transcriptFd); } catch { /* ignore */ }
+  }
+
+  if (typeof child.pid !== "number") {
+    throw new Error(`[dispatcher] reviewer spawn returned no pid for card ${card.id}`);
+  }
+
+  child.unref();
+
+  return {
+    pid: child.pid,
+    child,
+    cardId: card.id,
+    attempt,
+    role: "reviewer",
+    startedAt: new Date().toISOString(),
+    transcriptPath,
+    worktreePath: cfg.boardRoot, // reviewer cwd
+    wipBranch,
+    exitStartedAt: null,
+  };
+}
+
+// ─── Merger spawn ───────────────────────────────────────────────────────────
+
+function buildMergerMessage(args: {
+  id: string;
+  title: string;
+  description: string;
+  wipBranch: string;
+  comments: Comment[];
+}): string {
+  const conversation = formatConversationSection(args.comments);
+  return [
+    `# Card ${args.id}: ${args.title} — MERGE`,
+    "",
+    "You are merging the worker's branch into main. Your CWD is the main",
+    "repo root. The worker's branch is `" + args.wipBranch + "`.",
+    "",
+    "## Description (for context)",
+    "",
+    args.description.trim() || "(no description)",
+    "",
+    conversation,
+    "## Your job (in order)",
+    "",
+    "1. `git fetch origin`",
+    "2. `git checkout main && git pull --ff-only origin main` (you must be on",
+    "   main; never push from another branch).",
+    "3. `git merge --ff-only origin/" + args.wipBranch + "`. If ff-merge fails:",
+    "   - Try `git merge origin/" + args.wipBranch + "` and resolve any",
+    "     conflicts (preserve the worker's intent; main wins on truly",
+    "     unrelated drift).",
+    "   - Run typecheck + tests after resolution. If they fail, abort:",
+    "     `git merge --abort` and exit with FAIL.",
+    "4. `git push origin main`",
+    "5. `git push origin --delete " + args.wipBranch + "` (clean up).",
+    "",
+    "## Verdict (final assistant message)",
+    "",
+    "On success:",
+    "  Last line MUST be exactly: `MERGED: <sha>` where <sha> is the new",
+    "  origin/main HEAD short sha (`git rev-parse --short=12 HEAD`).",
+    "",
+    "On failure:",
+    "  Last line MUST start with: `FAILED: <one-line reason>`",
+    "  Then exit. The dispatcher routes the card back to in_progress for a",
+    "  fresh worker attempt.",
+    "",
+    "Hard rules: never force-push main, never amend main commits, never edit",
+    "files except to resolve conflicts.",
+  ].join("\n");
+}
+
+export async function spawnMerger(
+  card: import("./queue.js").QueueCandidate,
+  cfg: DispatcherConfig,
+): Promise<SpawnedWorker> {
+  const transcriptsDir = path.join(cfg.cardsDir, card.id, "transcripts");
+  fs.mkdirSync(transcriptsDir, { recursive: true });
+
+  const attempt = nextAttempt(transcriptsDir);
+  const ts = fileTimestamp();
+  const transcriptPath = path.join(transcriptsDir, `${ts}-attempt-${attempt}-merge.jsonl`);
+
+  const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
+  const parsed = parseCardMd(cardMd);
+  const wipBranch = `worker/card-${card.id}`;
+
+  const mergerPromptPath = path.join(cfg.promptsDir, "merger.md");
+  const rolePrompt = fs.readFileSync(mergerPromptPath, "utf8");
+  const scope = readScope(cfg, parsed.frontmatter.scope ?? null);
+  const promptText = composeSystemPrompt({
+    basePrompt: readBasePrompt(cfg),
+    scopeDescription: scope?.description ?? "",
+    rolePrompt,
+  });
+  const conversation = readConversation(
+    path.join(cfg.cardsDir, card.id, "comments.jsonl"),
+  );
+  const spawnMessage = buildMergerMessage({
+    id: card.id,
+    title: parsed.frontmatter.title,
+    description: parsed.description,
+    wipBranch,
+    comments: conversation,
+  });
+  const spawnCwd = resolveSpawnCwd({
+    base: cfg.boardRoot,
+    scopeCwd: scope?.cwd,
+    cardId: card.id,
+    role: "merger",
+  });
+
+  const args: string[] = [
+    "-p",
+    // See spawnWorker for auth-mode rationale.
+    ...(cfg.authMode === "bare" ? ["--bare"] : []),
+    "--permission-mode",
+    "bypassPermissions",
+    "--append-system-prompt",
+    promptText,
+    "--allowed-tools",
+    "Bash,Read,Edit,Grep,Glob",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    spawnMessage,
+  ];
+
+  // Read the user-configured post-build command from config.json on each
+  // spawn so changes via Settings → Merger take effect without a restart.
+  const postBuildCmd = readMergerPostBuildCmd(cfg);
+
+  // Discover the project's package manager + standard scripts and surface
+  // them as env vars. The merger prompt expects the same names a worker
+  // sees (install/test/build/typecheck) so it can run e.g. a final
+  // `$BOARD_BUILD_CMD` post-conflict-resolution without re-deriving the
+  // toolchain. Discovery runs from the merger's cwd (BOARD_ROOT, possibly
+  // narrowed by scope.cwd) — the cwd contains the project's lockfile +
+  // package.json, which is what `discoverCommands` keys off.
+  const cmds = discoverCommands(spawnCwd);
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    // See spawnWorker for auth-mode rationale.
+    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
+    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    BOARD_ROOT: cfg.boardRoot,
+    BOARD_SERVER_URL: cfg.serverUrl,
+    BOARD_DATA: cfg.boardData,
+    BOARD_WORKTREES: cfg.worktreesDir,
+    CARD_ID: card.id,
+    WIP_BRANCH: wipBranch,
+    ATTEMPT: String(attempt),
+    // Only inject the env var when the user actually configured a command,
+    // so the merger prompt's "if set and non-empty" check is unambiguous.
+    ...(postBuildCmd !== null
+      ? { BOARD_MERGER_POST_BUILD_CMD: postBuildCmd }
+      : {}),
+    // Discovery util returns null for any command it couldn't pin down
+    // (e.g. no package.json, missing script). Inject only the ones we
+    // actually have so the merger prompt's "if set and non-empty" check
+    // is consistent with $BOARD_MERGER_POST_BUILD_CMD above.
+    ...(cmds.installCmd !== null ? { BOARD_INSTALL_CMD: cmds.installCmd } : {}),
+    ...(cmds.testCmd !== null ? { BOARD_TEST_CMD: cmds.testCmd } : {}),
+    ...(cmds.buildCmd !== null ? { BOARD_BUILD_CMD: cmds.buildCmd } : {}),
+    ...(cmds.typecheckCmd !== null ? { BOARD_TYPECHECK_CMD: cmds.typecheckCmd } : {}),
+  };
+
+  // See spawnWorker for rationale: fd-stdio + detached + unref so the
+  // merger survives a dispatcher restart without SIGPIPE.
+  const transcriptFd = fs.openSync(transcriptPath, "a");
+
+  let child: ChildProcess;
+  try {
+    child = spawn("claude", args, {
+      // Merger runs in main repo root by default; scope.cwd may narrow it.
+      cwd: spawnCwd,
+      env,
+      stdio: ["ignore", transcriptFd, transcriptFd],
+      detached: true,
+    });
+  } finally {
+    try { fs.closeSync(transcriptFd); } catch { /* ignore */ }
+  }
+
+  if (typeof child.pid !== "number") {
+    throw new Error(`[dispatcher] merger spawn returned no pid for card ${card.id}`);
+  }
+
+  child.unref();
+
+  return {
+    pid: child.pid,
+    child,
+    cardId: card.id,
+    attempt,
+    role: "merger",
+    startedAt: new Date().toISOString(),
+    transcriptPath,
+    worktreePath: cfg.boardRoot,
+    wipBranch,
+    exitStartedAt: null,
+  };
+}

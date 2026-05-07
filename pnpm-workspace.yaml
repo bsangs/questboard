@@ -1,0 +1,6 @@
+packages:
+  - "board/core"
+  - "board/server"
+  - "board/dispatcher"
+  - "board/worker-tools"
+  - "ui"

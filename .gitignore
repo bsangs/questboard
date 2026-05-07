@@ -1,0 +1,48 @@
+# Claude Code local state.
+.claude/
+
+# Environment files.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Questboard runtime state.
+.questboard/
+
+# Dependencies.
+node_modules/
+
+# Build outputs.
+dist/
+.next/
+
+# Local databases / state.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-*
+data/
+.local/
+
+# Logs.
+logs/
+*.log
+
+# Runtime temp.
+tmp/
+temp/
+*.tmp
+*.pid
+
+# Package artifacts.
+*.tgz
+
+# OS / editor files.
+.DS_Store
+.vscode/
+
+# Local planning notes — not part of public docs.
+docs/local-plan/
