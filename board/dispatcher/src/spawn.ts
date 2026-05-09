@@ -536,10 +536,6 @@ export async function spawnWorker(
 
 // ─── Reviewer spawn ─────────────────────────────────────────────────────────
 
-/** Hard cap on the injected diff payload. Bigger than this and we head-truncate
- *  with a marker so the spawn message stays under the model's input limit. */
-const REVIEWER_DIFF_MAX_BYTES = 500_000;
-
 /**
  * Run a git command and capture stdout. Returns null on failure (e.g. the
  * branch hasn't been pushed yet, or fetch is offline). The reviewer message
@@ -557,8 +553,6 @@ async function gitCapture(
     const { stdout } = await execFileAsync("git", args, {
       cwd,
       timeout: timeoutMs,
-      // Diffs can be large; cap at a few MB so the buffer doesn't OOM. The
-      // injected payload is then truncated to REVIEWER_DIFF_MAX_BYTES.
       maxBuffer: 32 * 1024 * 1024,
     });
     return String(stdout);
@@ -567,14 +561,18 @@ async function gitCapture(
   }
 }
 
+interface ReviewerGitContext {
+  base: string;
+  branchRef: string;
+  commits: string | null;
+  diffStat: string | null;
+  nameStatus: string | null;
+  diff: string | null;
+}
+
 /**
  * Pre-compute commits + diff for the reviewer so it doesn't have to run any
  * git commands itself (it's read-only — no Write/Edit/Bash-for-git).
- *
- * Steps:
- *   1. `git fetch origin` — refresh both origin/main and origin/<wip>.
- *   2. `git log origin/main..origin/<wip> --oneline` — commit summary.
- *   3. `git diff origin/main...origin/<wip>` — the merge-base diff.
  *
  * Best-effort: any step failure returns null for that field so the reviewer
  * still spawns with whatever context we did manage to gather.
@@ -582,9 +580,7 @@ async function gitCapture(
 async function gatherReviewerGitContext(
   boardRoot: string,
   wipBranch: string,
-): Promise<{ commits: string | null; diff: string | null; truncated: boolean }> {
-  // Step 1 — fetch is purely a freshness step. We tolerate offline / network
-  // failure; the next two commands operate on whatever refs we have.
+): Promise<ReviewerGitContext> {
   await gitCapture(boardRoot, ["fetch", "origin"]);
 
   const base =
@@ -598,35 +594,70 @@ async function gatherReviewerGitContext(
       ? `origin/${wipBranch}`
       : wipBranch;
 
-  // Step 2 — commit list. Empty string is a legitimate result (branch with no
-  // new commits beyond main); distinguish from "command failed" via null.
+  const range = `${base}...${branchRef}`;
   const commits = await gitCapture(boardRoot, [
     "log",
     `${base}..${branchRef}`,
     "--oneline",
   ]);
+  const diffStat = await gitCapture(boardRoot, ["diff", "--stat", range]);
+  const nameStatus = await gitCapture(boardRoot, ["diff", "--name-status", range]);
+  const diff = await gitCapture(boardRoot, ["diff", range]);
 
-  // Step 3 — diff. If the buffer caps out we'd get null; in practice the 32MB
-  // maxBuffer in gitCapture is well above the eventual 500KB injection cap.
-  let diff = await gitCapture(boardRoot, [
-    "diff",
-    `${base}...${branchRef}`,
-  ]);
+  return { base, branchRef, commits, diffStat, nameStatus, diff };
+}
 
-  let truncated = false;
-  if (diff && diff.length > REVIEWER_DIFF_MAX_BYTES) {
-    // Head-truncate so the reviewer sees the start of every file in the diff
-    // (file headers, hunks for the early files). Tail bytes — usually later
-    // files — are dropped with an explicit marker so the model knows.
-    const head = diff.slice(0, REVIEWER_DIFF_MAX_BYTES);
-    const droppedBytes = diff.length - REVIEWER_DIFF_MAX_BYTES;
-    diff =
-      head +
-      `\n\n... [truncated: ${droppedBytes} more bytes; diff capped at ${REVIEWER_DIFF_MAX_BYTES} bytes]\n`;
-    truncated = true;
-  }
+function contextDisplayPath(filePath: string): string {
+  return filePath;
+}
 
-  return { commits, diff, truncated };
+function writeReviewerContextFiles(args: {
+  boardRoot: string;
+  cardsDir: string;
+  cardId: string;
+  attempt: number;
+  gitCtx: ReviewerGitContext;
+}): { summaryPath: string; commitsPath: string; diffPath: string } {
+  const dir = path.join(args.cardsDir, args.cardId, "review-context");
+  fs.mkdirSync(dir, { recursive: true });
+
+  const prefix = `attempt-${args.attempt}`;
+  const summaryPath = path.join(dir, `${prefix}-summary.md`);
+  const commitsPath = path.join(dir, `${prefix}-commits.txt`);
+  const diffPath = path.join(dir, `${prefix}-diff.patch`);
+
+  const commits = args.gitCtx.commits ?? "";
+  const diff = args.gitCtx.diff ?? "";
+  fs.writeFileSync(commitsPath, commits, "utf8");
+  fs.writeFileSync(diffPath, diff, "utf8");
+
+  const summary = [
+    `# Review context for card ${args.cardId}`,
+    "",
+    `Base ref: ${args.gitCtx.base}`,
+    `Branch ref: ${args.gitCtx.branchRef}`,
+    "",
+    "## Changed files",
+    "",
+    "```",
+    args.gitCtx.nameStatus?.trimEnd() || "(unavailable)",
+    "```",
+    "",
+    "## Diff stat",
+    "",
+    "```",
+    args.gitCtx.diffStat?.trimEnd() || "(unavailable)",
+    "```",
+    "",
+    "## Context files",
+    "",
+    `- Commits: ${contextDisplayPath(commitsPath)}`,
+    `- Full diff: ${contextDisplayPath(diffPath)}`,
+    "",
+  ].join("\n");
+  fs.writeFileSync(summaryPath, summary, "utf8");
+
+  return { summaryPath, commitsPath, diffPath };
 }
 
 function buildReviewerMessage(args: {
@@ -635,30 +666,28 @@ function buildReviewerMessage(args: {
   cardMd: string;
   wipBranch: string;
   comments: Comment[];
-  commits: string | null;
-  diff: string | null;
-  diffTruncated: boolean;
+  boardRoot: string;
+  gitCtx: ReviewerGitContext;
+  summaryPath: string;
+  commitsPath: string;
+  diffPath: string;
 }): string {
   const conversation = formatConversationSection(args.comments);
   const commitsBody =
-    args.commits === null
+    args.gitCtx.commits === null
       ? "(unable to compute — git fetch/log failed; treat as context unavailable)"
-      : args.commits.trim() === ""
-        ? "(no commits beyond origin/main)"
-        : args.commits.trimEnd();
-  const diffBody =
-    args.diff === null
-      ? "(unable to compute — git diff failed; treat as context unavailable)"
-      : args.diff.trim() === ""
-        ? "(empty diff — branch matches origin/main)"
-        : args.diff.trimEnd();
+      : args.gitCtx.commits.trim() === ""
+        ? "(no commits beyond the base ref)"
+        : args.gitCtx.commits.trimEnd();
+  const nameStatusBody = args.gitCtx.nameStatus?.trimEnd() || "(unavailable)";
+  const diffStatBody = args.gitCtx.diffStat?.trimEnd() || "(unavailable)";
   return [
     `# Card ${args.id}: ${args.title} — REVIEW`,
     "",
     "You are reviewing the code changes prepared by a worker. The branch is",
     `\`${args.wipBranch}\`. The card metadata, prior conversation, commit list,`,
-    "and full diff are inlined below — you do NOT need to read card.md /",
-    "comments.jsonl or run any git commands. You are read-only by design.",
+    "changed-file summary, and review context file paths are below. You are",
+    "read-only by design and do not need to run any git commands.",
     "",
     "## Card",
     "",
@@ -671,15 +700,27 @@ function buildReviewerMessage(args: {
     commitsBody,
     "```",
     "",
-    "## Diff",
+    "## Changed files",
     "",
-    args.diffTruncated
-      ? "The diff was head-truncated to fit the model context. Judge what you can from the visible portion; missing tail bytes are noted at the end of the block."
-      : "Full diff between origin/main and the worker's branch.",
-    "",
-    "```diff",
-    diffBody,
     "```",
+    nameStatusBody,
+    "```",
+    "",
+    "## Diff stat",
+    "",
+    "```",
+    diffStatBody,
+    "```",
+    "",
+    "## Review context files",
+    "",
+    "The full diff is stored in a runtime file instead of being inlined into",
+    "this prompt. Read the summary first, then inspect the full diff or relevant",
+    "source files as needed before deciding.",
+    "",
+    `- Summary: ${contextDisplayPath(args.summaryPath)}`,
+    `- Commits: ${contextDisplayPath(args.commitsPath)}`,
+    `- Full diff: ${contextDisplayPath(args.diffPath)}`,
     "",
     "Judge the changes against the card description's intent (and the prior",
     "conversation, if any), and write your verdict as your final assistant",
@@ -726,10 +767,16 @@ export async function spawnReviewer(
   );
 
   // Pre-compute commits + diff server-side so the reviewer doesn't need any
-  // git access. With this hydrated into the spawn message, the reviewer is
-  // truly read-only — the disallowedTools below back this up at the tool
-  // level, but the data injection here is what makes the persona viable.
+  // git access. Large payloads are written to runtime files and referenced from
+  // the prompt so the claude argv stays small.
   const gitCtx = await gatherReviewerGitContext(cfg.boardRoot, wipBranch);
+  const reviewerContext = writeReviewerContextFiles({
+    boardRoot: cfg.boardRoot,
+    cardsDir: cfg.cardsDir,
+    cardId: card.id,
+    attempt,
+    gitCtx,
+  });
 
   const spawnMessage = buildReviewerMessage({
     id: card.id,
@@ -737,9 +784,11 @@ export async function spawnReviewer(
     cardMd,
     wipBranch,
     comments: conversation,
-    commits: gitCtx.commits,
-    diff: gitCtx.diff,
-    diffTruncated: gitCtx.truncated,
+    boardRoot: cfg.boardRoot,
+    gitCtx,
+    summaryPath: reviewerContext.summaryPath,
+    commitsPath: reviewerContext.commitsPath,
+    diffPath: reviewerContext.diffPath,
   });
   const spawnCwd = resolveSpawnCwd({
     base: cfg.boardRoot,
