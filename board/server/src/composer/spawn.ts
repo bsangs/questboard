@@ -47,6 +47,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import {
+  buildToolGuidanceSection,
   ComposerMessage,
   type ComposerMessage as ComposerMessageT,
   type ComposerThreadSummary,
@@ -311,35 +312,70 @@ async function cleanupComposerWorktree(threadId: string): Promise<void> {
 
 // ─── Spawning ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT_PATH = resolve(
+const PROMPTS_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  // dist/composer/spawn.js → questboard/board/prompts/composer.md
+  // dist/composer/spawn.js → questboard/board/prompts
   "..",
   "..",
   "..",
   "prompts",
-  "composer.md",
 );
+
+const SYSTEM_PROMPT_PATH = resolve(PROMPTS_DIR, "composer.md");
+
+const COMPOSER_ALLOWED_TOOLS = [
+  "Bash",
+  "Read",
+  "Grep",
+  "Glob",
+  "mcp__composer__make_card",
+  "mcp__composer__save_plan",
+] as const;
+
+function readToolGuidance(): string {
+  const guidanceByTool: Record<string, string> = {};
+  for (const tool of COMPOSER_ALLOWED_TOOLS) {
+    const p = resolve(PROMPTS_DIR, "claude-code", "tool-guidance", `${tool}.md`);
+    try {
+      guidanceByTool[tool] = readFileSync(p, "utf8");
+    } catch {
+      /* Guidance is optional for each tool. */
+    }
+  }
+  return buildToolGuidanceSection(guidanceByTool);
+}
 
 function readSystemPrompt(): string {
   // Resolve at spawn time (not import time) so a prompt edit lands without
   // a server restart. Best-effort: if the file is missing, fall back to a
   // minimal placeholder rather than crashing.
-  for (const p of [
-    SYSTEM_PROMPT_PATH,
-    // tsx watch (dev): src/composer/spawn.ts → ../../prompts/composer.md
-    resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts", "composer.md"),
-  ]) {
+  let rolePrompt: string | null = null;
+  for (const p of [SYSTEM_PROMPT_PATH]) {
     if (existsSync(p)) {
       try {
-        return readFileSync(p, "utf8");
+        rolePrompt = readFileSync(p, "utf8");
+        break;
       } catch {
         /* try next */
       }
     }
   }
-  logger.warn("composer_system_prompt_missing", { tried: SYSTEM_PROMPT_PATH });
-  return "You are a planning partner inside an questboard Composer thread.";
+  if (rolePrompt === null) {
+    logger.warn("composer_system_prompt_missing", { tried: SYSTEM_PROMPT_PATH });
+    rolePrompt = "You are a planning partner inside an questboard Composer thread.";
+  }
+
+  const toolGuidance = readToolGuidance();
+  if (!toolGuidance) return rolePrompt;
+  return [
+    "# Tool usage guidance",
+    "",
+    toolGuidance,
+    "",
+    "---",
+    "",
+    rolePrompt,
+  ].join("\n");
 }
 
 async function spawnProc(
@@ -383,7 +419,7 @@ async function spawnProc(
     // We disallow Write / Edit / NotebookEdit as defense-in-depth so a
     // confused model can't bypass the gate by editing the worktree.
     "--allowed-tools",
-    "Bash,Read,Grep,Glob,mcp__composer__make_card,mcp__composer__save_plan",
+    COMPOSER_ALLOWED_TOOLS.join(","),
     "--disallowedTools",
     "Write,Edit,NotebookEdit",
   ];

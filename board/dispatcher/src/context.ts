@@ -6,6 +6,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { buildToolGuidanceSection } from "@questboard/core";
 import type { DispatcherConfig } from "./config.js";
 
 /**
@@ -80,9 +81,31 @@ export function readMergerPostBuildCmd(cfg: DispatcherConfig): string | null {
  * role-specific prompt (worker.md / reviewer.md / merger.md). All three
  * are joined with horizontal rules so the model can see the layering.
  */
+export function readToolGuidance(
+  cfg: DispatcherConfig,
+  allowedTools: readonly string[],
+): string {
+  const guidanceByTool: Record<string, string> = {};
+  for (const tool of allowedTools) {
+    const p = path.join(
+      cfg.promptsDir,
+      "claude-code",
+      "tool-guidance",
+      `${tool}.md`,
+    );
+    try {
+      guidanceByTool[tool] = fs.readFileSync(p, "utf8");
+    } catch {
+      /* Guidance is optional for each tool. */
+    }
+  }
+  return buildToolGuidanceSection(guidanceByTool);
+}
+
 export function composeSystemPrompt(parts: {
   basePrompt: string;
   scopeDescription: string;
+  toolGuidance?: string;
   rolePrompt: string;
 }): string {
   const sections: string[] = [];
@@ -91,6 +114,9 @@ export function composeSystemPrompt(parts: {
   }
   if (parts.scopeDescription) {
     sections.push("# Scope guidance\n\n" + parts.scopeDescription);
+  }
+  if (parts.toolGuidance) {
+    sections.push("# Tool usage guidance\n\n" + parts.toolGuidance);
   }
   sections.push(parts.rolePrompt);
   return sections.join("\n\n---\n\n");

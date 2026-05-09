@@ -36,7 +36,12 @@ import {
   readBasePrompt,
   readMergerPostBuildCmd,
   readScope,
+  readToolGuidance,
 } from "./context.js";
+
+const WORKER_ALLOWED_TOOLS = ["Bash", "Read", "Write", "Edit", "Grep", "Glob"] as const;
+const REVIEWER_ALLOWED_TOOLS = ["Bash", "Read", "Grep", "Glob"] as const;
+const MERGER_ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Grep", "Glob"] as const;
 
 export type WorkerRole = "worker" | "reviewer" | "merger";
 
@@ -390,6 +395,7 @@ export async function spawnWorker(
   const promptText = composeSystemPrompt({
     basePrompt: readBasePrompt(cfg),
     scopeDescription: scope?.description ?? "",
+    toolGuidance: readToolGuidance(cfg, WORKER_ALLOWED_TOOLS),
     rolePrompt,
   });
   const conversation = readConversation(
@@ -459,7 +465,7 @@ export async function spawnWorker(
     "--append-system-prompt",
     promptText,
     "--allowed-tools",
-    "Bash,Read,Write,Edit,Grep,Glob",
+    WORKER_ALLOWED_TOOLS.join(","),
     "--output-format",
     "stream-json",
     "--verbose",
@@ -760,6 +766,7 @@ export async function spawnReviewer(
   const promptText = composeSystemPrompt({
     basePrompt: readBasePrompt(cfg),
     scopeDescription: scope?.description ?? "",
+    toolGuidance: readToolGuidance(cfg, REVIEWER_ALLOWED_TOOLS),
     rolePrompt,
   });
   const conversation = readConversation(
@@ -807,7 +814,7 @@ export async function spawnReviewer(
     promptText,
     "--allowed-tools",
     // Reviewer is read-only — no Write/Edit so it can't accidentally commit.
-    "Bash,Read,Grep,Glob",
+    REVIEWER_ALLOWED_TOOLS.join(","),
     // Defense in depth: even though the allowed-tools list above doesn't
     // include any mutating tools, claude has been known to surface them
     // anyway under permissive permission modes. Explicitly deny mutation
@@ -944,6 +951,7 @@ export async function spawnMerger(
   const promptText = composeSystemPrompt({
     basePrompt: readBasePrompt(cfg),
     scopeDescription: scope?.description ?? "",
+    toolGuidance: readToolGuidance(cfg, MERGER_ALLOWED_TOOLS),
     rolePrompt,
   });
   const conversation = readConversation(
@@ -972,7 +980,7 @@ export async function spawnMerger(
     "--append-system-prompt",
     promptText,
     "--allowed-tools",
-    "Bash,Read,Edit,Grep,Glob",
+    MERGER_ALLOWED_TOOLS.join(","),
     "--output-format",
     "stream-json",
     "--verbose",
