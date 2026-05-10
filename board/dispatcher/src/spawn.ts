@@ -45,6 +45,42 @@ const MERGER_ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Grep", "Glob"] as const;
 
 export type WorkerRole = "worker" | "reviewer" | "merger";
 
+export interface LiveTokenTotals {
+  /** Cumulative input/cache tokens spent by this helper run. */
+  input: number;
+  /** Cumulative output tokens spent by this helper run. */
+  output: number;
+  /** Current context-window size: input/cache tokens for the latest model call. */
+  context: number;
+  exact: boolean;
+  stream?: LiveTokenStreamState;
+}
+
+interface TokenUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+}
+
+interface LiveTokenStreamState {
+  settledInput: number;
+  settledOutput: number;
+  lastContext: number;
+  currentUsage: TokenUsage | null;
+}
+
+interface StreamUsageEvent {
+  type?: string;
+  message?: { usage?: TokenUsage };
+  usage?: TokenUsage;
+  event?: {
+    type?: string;
+    message?: { usage?: TokenUsage };
+    usage?: TokenUsage;
+  };
+}
+
 export interface SpawnedWorker {
   pid: number;
   child: ChildProcess;
@@ -59,6 +95,8 @@ export interface SpawnedWorker {
   wipBranch: string;
   /** What kind of process this is. Drives exit-handler routing. */
   role: WorkerRole;
+  /** Live token totals accumulated from claude stream-json usage frames. */
+  liveTokens: LiveTokenTotals;
   /**
    * Set the moment the exit handler starts running (i.e. child.on("exit")
    * fired). Stays null while the worker is alive. Used by StatsReporter to
@@ -79,6 +117,211 @@ function nextAttempt(transcriptsDir: string): number {
 
 function fileTimestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "Z");
+}
+
+function totalsFromUsage(usage: TokenUsage): LiveTokenTotals {
+  return {
+    input:
+      (usage.input_tokens ?? 0) +
+      (usage.cache_creation_input_tokens ?? 0) +
+      (usage.cache_read_input_tokens ?? 0),
+    output: usage.output_tokens ?? 0,
+    context:
+      (usage.input_tokens ?? 0) +
+      (usage.cache_creation_input_tokens ?? 0) +
+      (usage.cache_read_input_tokens ?? 0),
+    exact: true,
+  };
+}
+
+function createLiveTokenTotals(): LiveTokenTotals {
+  return { input: 0, output: 0, context: 0, exact: false };
+}
+
+function streamState(tokens: LiveTokenTotals): LiveTokenStreamState {
+  if (!tokens.stream) {
+    tokens.stream = {
+      settledInput: 0,
+      settledOutput: 0,
+      lastContext: 0,
+      currentUsage: null,
+    };
+  }
+  return tokens.stream;
+}
+
+function mergeUsage(prev: TokenUsage, next: TokenUsage): TokenUsage {
+  return {
+    input_tokens:
+      next.input_tokens != null && next.input_tokens > 0
+        ? next.input_tokens
+        : prev.input_tokens,
+    cache_creation_input_tokens:
+      next.cache_creation_input_tokens != null && next.cache_creation_input_tokens > 0
+        ? next.cache_creation_input_tokens
+        : prev.cache_creation_input_tokens,
+    cache_read_input_tokens:
+      next.cache_read_input_tokens != null && next.cache_read_input_tokens > 0
+        ? next.cache_read_input_tokens
+        : prev.cache_read_input_tokens,
+    output_tokens: next.output_tokens ?? prev.output_tokens,
+  };
+}
+
+function usageHasTokens(usage: TokenUsage): boolean {
+  return (
+    (usage.input_tokens ?? 0) > 0 ||
+    (usage.cache_creation_input_tokens ?? 0) > 0 ||
+    (usage.cache_read_input_tokens ?? 0) > 0 ||
+    (usage.output_tokens ?? 0) > 0
+  );
+}
+
+function refreshDisplayedLiveTokens(tokens: LiveTokenTotals): void {
+  const state = streamState(tokens);
+  const current = state.currentUsage ? totalsFromUsage(state.currentUsage) : null;
+  tokens.input = state.settledInput + (current?.input ?? 0);
+  tokens.output = state.settledOutput + (current?.output ?? 0);
+  tokens.context = current?.context ?? state.lastContext;
+  tokens.exact = tokens.exact || tokens.input > 0 || tokens.output > 0;
+}
+
+function replaceLiveTokensWithUsage(tokens: LiveTokenTotals, usage: TokenUsage): void {
+  const next = totalsFromUsage(usage);
+  const state = streamState(tokens);
+  state.settledInput = next.input;
+  state.settledOutput = next.output;
+  state.lastContext = tokens.context || state.lastContext || next.context;
+  state.currentUsage = null;
+  tokens.input = next.input;
+  tokens.output = next.output;
+  tokens.context = state.lastContext;
+  tokens.exact = true;
+}
+
+function applyStreamUsageEvent(tokens: LiveTokenTotals, event: NonNullable<StreamUsageEvent["event"]>): void {
+  const state = streamState(tokens);
+  if (event.type === "message_start") {
+    state.currentUsage = event.message?.usage
+      ? mergeUsage({}, event.message.usage)
+      : {};
+    refreshDisplayedLiveTokens(tokens);
+    return;
+  }
+  if (event.type === "message_delta" && event.usage) {
+    state.currentUsage = mergeUsage(state.currentUsage ?? {}, event.usage);
+    refreshDisplayedLiveTokens(tokens);
+    return;
+  }
+  if (event.type === "message_stop") {
+    if (state.currentUsage && usageHasTokens(state.currentUsage)) {
+      const current = totalsFromUsage(state.currentUsage);
+      state.settledInput += current.input;
+      state.settledOutput += current.output;
+      state.lastContext = current.context;
+      state.currentUsage = null;
+      refreshDisplayedLiveTokens(tokens);
+    }
+  }
+}
+
+function addLiveTokensFromLine(tokens: LiveTokenTotals, line: string): void {
+  if (!line.trim()) return;
+  let parsed: StreamUsageEvent;
+  try {
+    parsed = JSON.parse(line) as StreamUsageEvent;
+  } catch {
+    return;
+  }
+  if (parsed.type === "stream_event" && parsed.event) {
+    applyStreamUsageEvent(tokens, parsed.event);
+    return;
+  }
+  if (parsed.type !== "result") return;
+  const usage = parsed.usage;
+  if (!usage) return;
+  if (parsed.type === "result") {
+    // The final result frame is the authoritative run total. It replaces any
+    // partial stream totals observed while the helper was still running.
+    replaceLiveTokensWithUsage(tokens, usage);
+    return;
+  }
+}
+
+export function refreshLiveTokensFromTranscript(
+  transcriptPath: string,
+  liveTokens: LiveTokenTotals,
+): void {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(transcriptPath, "utf8");
+  } catch {
+    return;
+  }
+  const next = createLiveTokenTotals();
+  for (const line of raw.split(/\r?\n/)) {
+    addLiveTokensFromLine(next, line);
+  }
+  liveTokens.input = next.input;
+  liveTokens.output = next.output;
+  liveTokens.context = next.context;
+  liveTokens.exact = next.exact;
+  liveTokens.stream = next.stream;
+}
+
+function observeStreamJsonTranscript(
+  child: ChildProcess,
+  transcriptPath: string,
+  liveTokens: LiveTokenTotals,
+): void {
+  let offset = 0;
+  let buffered = "";
+
+  const readNewBytes = () => {
+    let size: number;
+    try {
+      size = fs.statSync(transcriptPath).size;
+    } catch {
+      return;
+    }
+    if (size < offset) {
+      offset = 0;
+      buffered = "";
+    }
+    if (size === offset) return;
+
+    const len = size - offset;
+    const buf = Buffer.allocUnsafe(len);
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(transcriptPath, "r");
+      fs.readSync(fd, buf, 0, len, offset);
+    } catch {
+      return;
+    } finally {
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch { /* ignore */ }
+      }
+    }
+    offset = size;
+    buffered += buf.toString("utf8");
+
+    let nl: number;
+    while ((nl = buffered.indexOf("\n")) !== -1) {
+      const line = buffered.slice(0, nl);
+      buffered = buffered.slice(nl + 1);
+      addLiveTokensFromLine(liveTokens, line);
+    }
+  };
+
+  const listener = () => readNewBytes();
+  fs.watchFile(transcriptPath, { interval: 1_000 }, listener);
+  child.on("exit", () => {
+    readNewBytes();
+    addLiveTokensFromLine(liveTokens, buffered);
+    buffered = "";
+    fs.unwatchFile(transcriptPath, listener);
+  });
 }
 
 /** Read shared card conversation from comments.jsonl (conversation kinds only). */
@@ -468,6 +711,7 @@ export async function spawnWorker(
     WORKER_ALLOWED_TOOLS.join(","),
     "--output-format",
     "stream-json",
+    "--include-partial-messages",
     "--verbose",
     spawnMessage,
   ];
@@ -518,6 +762,9 @@ export async function spawnWorker(
     try { fs.closeSync(transcriptFd); } catch { /* ignore */ }
   }
 
+  const liveTokens = createLiveTokenTotals();
+  observeStreamJsonTranscript(child, transcriptPath, liveTokens);
+
   if (typeof child.pid !== "number") {
     throw new Error(`[dispatcher] spawn returned no pid for card ${card.id}`);
   }
@@ -532,6 +779,7 @@ export async function spawnWorker(
     cardId: card.id,
     attempt,
     role: "worker",
+    liveTokens,
     startedAt: new Date().toISOString(),
     transcriptPath,
     worktreePath: wt.worktreePath,
@@ -823,6 +1071,7 @@ export async function spawnReviewer(
     "Write,Edit,NotebookEdit",
     "--output-format",
     "stream-json",
+    "--include-partial-messages",
     "--verbose",
     spawnMessage,
   ];
@@ -859,6 +1108,9 @@ export async function spawnReviewer(
     try { fs.closeSync(transcriptFd); } catch { /* ignore */ }
   }
 
+  const liveTokens = createLiveTokenTotals();
+  observeStreamJsonTranscript(child, transcriptPath, liveTokens);
+
   if (typeof child.pid !== "number") {
     throw new Error(`[dispatcher] reviewer spawn returned no pid for card ${card.id}`);
   }
@@ -871,6 +1123,7 @@ export async function spawnReviewer(
     cardId: card.id,
     attempt,
     role: "reviewer",
+    liveTokens,
     startedAt: new Date().toISOString(),
     transcriptPath,
     worktreePath: cfg.boardRoot, // reviewer cwd
@@ -983,6 +1236,7 @@ export async function spawnMerger(
     MERGER_ALLOWED_TOOLS.join(","),
     "--output-format",
     "stream-json",
+    "--include-partial-messages",
     "--verbose",
     spawnMessage,
   ];
@@ -1044,6 +1298,9 @@ export async function spawnMerger(
     try { fs.closeSync(transcriptFd); } catch { /* ignore */ }
   }
 
+  const liveTokens = createLiveTokenTotals();
+  observeStreamJsonTranscript(child, transcriptPath, liveTokens);
+
   if (typeof child.pid !== "number") {
     throw new Error(`[dispatcher] merger spawn returned no pid for card ${card.id}`);
   }
@@ -1056,6 +1313,7 @@ export async function spawnMerger(
     cardId: card.id,
     attempt,
     role: "merger",
+    liveTokens,
     startedAt: new Date().toISOString(),
     transcriptPath,
     worktreePath: cfg.boardRoot,

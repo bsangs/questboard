@@ -14,10 +14,15 @@
  * place card transitions are made on a worker's behalf.
  */
 import { execFile } from "node:child_process";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { ServerApi } from "./api.js";
 import type { Logger } from "./logger.js";
-import type { SpawnedWorker, WorkerRole } from "./spawn.js";
+import {
+  refreshLiveTokensFromTranscript,
+  type SpawnedWorker,
+  type WorkerRole,
+} from "./spawn.js";
 import {
   commitsAheadOfMain,
   hasUncommittedChanges,
@@ -127,6 +132,49 @@ function helperAuthor(role: WorkerRole): "worker" | "reviewer" | "system" {
 
 function withMergerPrefix(role: WorkerRole, body: string): string {
   return role === "merger" ? `[merger] ${body}` : body;
+}
+
+function elapsedSecondsSince(iso: string): number {
+  const started = Date.parse(iso);
+  if (!Number.isFinite(started)) return 0;
+  return Math.max(0, Math.floor((Date.now() - started) / 1000));
+}
+
+async function reportFinalHeartbeat(
+  worker: SpawnedWorker,
+  deps: ExitHandlerDeps,
+): Promise<void> {
+  refreshLiveTokensFromTranscript(worker.transcriptPath, worker.liveTokens);
+  // `tokens_used` is the card tile's context-window meter, so it must stay
+  // input/cache only. Per-role input/output totals are sent separately.
+  const contextTokens = worker.liveTokens.context;
+  try {
+    await deps.api.reportHeartbeat(
+      worker.cardId,
+      worker.pid,
+      contextTokens,
+      elapsedSecondsSince(worker.startedAt),
+      worker.role,
+      worker.liveTokens.input,
+      worker.liveTokens.output,
+      basename(worker.transcriptPath),
+    );
+    deps.logger.log({
+      event: "final_heartbeat_reported",
+      card_id: worker.cardId,
+      pid: worker.pid,
+      role: worker.role,
+      tokens_used: contextTokens,
+    });
+  } catch (err) {
+    deps.logger.log({
+      event: "final_heartbeat_failed",
+      card_id: worker.cardId,
+      pid: worker.pid,
+      role: worker.role,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -304,7 +352,7 @@ export function attachExitHandler(worker: SpawnedWorker, deps: ExitHandlerDeps):
     // NOTE: do NOT remove from `active` yet. The stats reporter checks
     // `active.has(cardId)` to decide whether a dead pid is "ours, still
     // being routed" vs "true orphan." If we delete here, the next stats
-    // tick (every 30s, but can land seconds after exit) sees the pid is
+    // tick (every 5s, but can land seconds after exit) sees the pid is
     // dead, the workers row hasn't been removed yet (reportExit hasn't
     // run), and reports it as worker_failed → card gets marked stuck even
     // on a clean exit. Keep the entry until reportExit completes.
@@ -317,6 +365,8 @@ export function attachExitHandler(worker: SpawnedWorker, deps: ExitHandlerDeps):
       exit_code: code,
       signal: signal ?? null,
     });
+
+    await reportFinalHeartbeat(worker, deps);
 
     try {
       await routeExit(worker, code, signal, deps);

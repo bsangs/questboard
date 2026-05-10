@@ -5,7 +5,7 @@
  */
 import { db, updateCardTokenTotals } from "./db.js";
 import { broadcast } from "./sse.js";
-import { getCardTokenTotals } from "./stages.js";
+import { getCardTokenTotals, type CardTokenTotals, type StageRole } from "./stages.js";
 import { logger } from "./logger.js";
 
 const upsertWorker = db.prepare(`
@@ -58,16 +58,41 @@ export function recordHeartbeat(
   pid: number,
   tokensUsed: number,
   elapsedSeconds: number,
+  role?: StageRole,
+  roleInputTokens?: number,
+  roleOutputTokens?: number,
+  transcript?: string,
 ): void {
   const now = new Date().toISOString();
   updateHeartbeat.run(now, tokensUsed, pid);
   updateCardStats.run(tokensUsed, elapsedSeconds, now, cardId);
   // Recompute per-role lifetime output totals from transcripts. Bounded
   // by the number of transcript files for this card; cheap enough to do
-  // every 30s heartbeat. Best-effort — errors here must not break the
+  // every heartbeat. Best-effort — errors here must not break the
   // heartbeat (which is what keeps the dispatcher alive).
+  let tokenTotals: CardTokenTotals = {
+    worker_input_tokens: 0,
+    worker_output_tokens: 0,
+    reviewer_input_tokens: 0,
+    reviewer_output_tokens: 0,
+    merger_input_tokens: 0,
+    merger_output_tokens: 0,
+  };
   try {
-    updateCardTokenTotals(cardId, getCardTokenTotals(cardId));
+    tokenTotals = getCardTokenTotals(cardId, {
+      excludeTranscript: transcript ?? null,
+    });
+    if (role === "worker") {
+      tokenTotals.worker_input_tokens += roleInputTokens ?? tokensUsed;
+      tokenTotals.worker_output_tokens += roleOutputTokens ?? 0;
+    } else if (role === "reviewer") {
+      tokenTotals.reviewer_input_tokens += roleInputTokens ?? tokensUsed;
+      tokenTotals.reviewer_output_tokens += roleOutputTokens ?? 0;
+    } else if (role === "merger") {
+      tokenTotals.merger_input_tokens += roleInputTokens ?? tokensUsed;
+      tokenTotals.merger_output_tokens += roleOutputTokens ?? 0;
+    }
+    updateCardTokenTotals(cardId, tokenTotals);
   } catch (err) {
     logger.error("token_totals_recompute_failed", {
       card_id: cardId,
@@ -78,8 +103,15 @@ export function recordHeartbeat(
     type: "worker_heartbeat",
     card_id: cardId,
     pid,
+    role: role ?? null,
     tokens_used: tokensUsed,
     elapsed_seconds: elapsedSeconds,
+    worker_input_tokens: tokenTotals.worker_input_tokens,
+    worker_output_tokens: tokenTotals.worker_output_tokens,
+    reviewer_input_tokens: tokenTotals.reviewer_input_tokens,
+    reviewer_output_tokens: tokenTotals.reviewer_output_tokens,
+    merger_input_tokens: tokenTotals.merger_input_tokens,
+    merger_output_tokens: tokenTotals.merger_output_tokens,
   });
 }
 

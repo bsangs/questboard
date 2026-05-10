@@ -6,6 +6,7 @@
  * pushes branches, and posts /review on their behalf.
  */
 import type { StuckReason } from "@questboard/core";
+import type { WorkerRole } from "./spawn.js";
 
 interface PostResult {
   status: number;
@@ -159,11 +160,19 @@ export class ServerApi {
     pid: number,
     tokensUsed: number,
     elapsedSeconds: number,
+    role?: WorkerRole,
+    roleInputTokens?: number,
+    roleOutputTokens?: number,
+    transcript?: string,
   ): Promise<PostResult> {
     return this.post(`/api/cards/${cardId}/heartbeat`, {
       pid,
+      ...(role ? { role } : {}),
       tokens_used: tokensUsed,
       elapsed_seconds: elapsedSeconds,
+      ...(roleInputTokens != null ? { role_input_tokens: roleInputTokens } : {}),
+      ...(roleOutputTokens != null ? { role_output_tokens: roleOutputTokens } : {}),
+      ...(transcript ? { transcript } : {}),
     });
   }
 

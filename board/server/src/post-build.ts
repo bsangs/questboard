@@ -56,6 +56,7 @@ import { db } from "./db.js";
 import { getConfig } from "./config.js";
 import { readCard, writeCardAtomic } from "./files.js";
 import { upsertCardRow } from "./db.js";
+import { broadcast } from "./sse.js";
 
 // ─── Active-run tracking + retry state ──────────────────────────────────────
 
@@ -426,6 +427,7 @@ export function runPostBuildAsync(
   const pid = child.pid;
   activePostBuilds.set(cardId, pid);
   lockCardForPostBuild(cardId, pid);
+  broadcast({ type: "card_updated", card_id: cardId });
   child.unref();
 
   logger.info("post_build_started", { cardId, pid, cmd });
@@ -437,6 +439,7 @@ export function runPostBuildAsync(
   child.on("exit", (code, signal) => {
     activePostBuilds.delete(cardId);
     unlockCardForPostBuild(pid);
+    broadcast({ type: "card_updated", card_id: cardId });
     const sizeBytes = (() => {
       try {
         return statSync(logPath).size;

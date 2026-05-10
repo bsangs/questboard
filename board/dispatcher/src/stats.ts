@@ -1,26 +1,31 @@
 /**
  * Stats reporter + dead-pid reconciler.
  *
- * Every 30s, walk the SQLite `workers` table (server-written; survives
+ * Every 5s, walk the SQLite `workers` table (server-written; survives
  * dispatcher restarts) and for each row:
  *
  *   - If the PID is dead (lost across a dispatcher restart, OOM, etc.):
  *     post /exit with worker_failed so the card moves out of in_progress.
- *   - If alive: locate the latest transcript file under
- *     `cards/<id>/transcripts/`, parse it for cumulative tokens + elapsed,
- *     and POST /heartbeat.
+ *   - If alive: read the active worker's live stream-json token counters
+ *     plus elapsed time, and POST /heartbeat. If the helper survived a
+ *     dispatcher restart and is missing from the active map, fall back to
+ *     scanning its latest transcript.
  *
  * Workers themselves never call the server. This is the only way the UI
  * gets live progress and the only way orphaned in_progress rows recover
  * after a dispatcher crash.
  */
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { Database as DBType } from "better-sqlite3";
+import * as fs from "node:fs";
+import { basename, join } from "node:path";
 import type { ServerApi } from "./api.js";
 import type { Logger } from "./logger.js";
-import type { SpawnedWorker } from "./spawn.js";
-import { transcriptTokens } from "./transcript.js";
+import {
+  refreshLiveTokensFromTranscript,
+  type LiveTokenTotals,
+  type SpawnedWorker,
+  type WorkerRole,
+} from "./spawn.js";
 
 export interface StatsReporterDeps {
   db: DBType;
@@ -57,36 +62,48 @@ function isAlive(pid: number): boolean {
   }
 }
 
-function latestTranscript(cardsDir: string, cardId: string): string | null {
-  const dir = path.join(cardsDir, cardId, "transcripts");
+function elapsedSecondsFromStart(startedAt: string): number {
+  const t = Date.parse(startedAt);
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 1000));
+}
+
+function roleFromTranscriptName(name: string): WorkerRole {
+  if (name.endsWith("-review.jsonl")) return "reviewer";
+  if (name.endsWith("-merge.jsonl")) return "merger";
+  return "worker";
+}
+
+function latestTranscript(cardsDir: string, cardId: string): {
+  path: string;
+  name: string;
+  role: WorkerRole;
+} | null {
+  const dir = join(cardsDir, cardId, "transcripts");
   let files: string[];
   try {
     files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
   } catch {
     return null;
   }
-  if (files.length === 0) return null;
-  let bestFile: string | null = null;
-  let bestMtime = -Infinity;
-  for (const f of files) {
-    const full = path.join(dir, f);
+  let best: { path: string; name: string; role: WorkerRole; mtimeMs: number } | null = null;
+  for (const name of files) {
+    const full = join(dir, name);
     try {
       const stat = fs.statSync(full);
-      if (stat.mtimeMs > bestMtime) {
-        bestMtime = stat.mtimeMs;
-        bestFile = full;
+      if (!best || stat.mtimeMs > best.mtimeMs) {
+        best = {
+          path: full,
+          name,
+          role: roleFromTranscriptName(name),
+          mtimeMs: stat.mtimeMs,
+        };
       }
     } catch {
-      // ignore individual failures
+      /* ignore individual transcript stat failures */
     }
   }
-  return bestFile;
-}
-
-function elapsedSecondsFromStart(startedAt: string): number {
-  const t = Date.parse(startedAt);
-  if (Number.isNaN(t)) return 0;
-  return Math.max(0, Math.floor((Date.now() - t) / 1000));
+  return best;
 }
 
 export class StatsReporter {
@@ -94,7 +111,7 @@ export class StatsReporter {
 
   constructor(private readonly deps: StatsReporterDeps) {}
 
-  start(intervalMs = 30_000): void {
+  start(intervalMs = 5_000): void {
     if (this.timer) return;
     void this.tick();
     this.timer = setInterval(() => void this.tick(), intervalMs);
@@ -109,7 +126,7 @@ export class StatsReporter {
   }
 
   private async tick(): Promise<void> {
-    const { db, api, logger, cardsDir, active } = this.deps;
+    const { db, api, logger, active, cardsDir } = this.deps;
     let rows: WorkerRow[];
     try {
       rows = db
@@ -205,12 +222,41 @@ export class StatsReporter {
         continue;
       }
 
-      const transcriptPath = latestTranscript(cardsDir, row.card_id);
-      const tokens = transcriptPath ? transcriptTokens(transcriptPath) : 0;
+      const worker = active.get(row.card_id);
+      let role = worker?.role;
+      let transcript = worker ? basename(worker.transcriptPath) : undefined;
+      let liveTokens: LiveTokenTotals | null = worker?.liveTokens ?? null;
       const elapsed = elapsedSecondsFromStart(row.started_at);
+      if (!worker) {
+        logger.log({
+          event: "stats_heartbeat_missing_worker",
+          card_id: row.card_id,
+          pid: row.pid,
+        });
+        const fallback = latestTranscript(cardsDir, row.card_id);
+        if (fallback) {
+          liveTokens = { input: 0, output: 0, context: 0, exact: false };
+          refreshLiveTokensFromTranscript(fallback.path, liveTokens);
+          role = fallback.role;
+          transcript = fallback.name;
+        }
+      }
+      // `cards.tokens_used` drives the card tile's context-window meter.
+      // Keep it to input/cache tokens only; role chips carry input/output
+      // separately for lifetime usage display.
+      const contextTokens = liveTokens?.context ?? 0;
 
       try {
-        await api.reportHeartbeat(row.card_id, row.pid, tokens, elapsed);
+        await api.reportHeartbeat(
+          row.card_id,
+          row.pid,
+          contextTokens,
+          elapsed,
+          role,
+          liveTokens?.input,
+          liveTokens?.output,
+          transcript,
+        );
       } catch (err) {
         logger.log({
           event: "stats_heartbeat_failed",

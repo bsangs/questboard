@@ -32,6 +32,7 @@
 import clsx from "clsx";
 import {
   AlertTriangle,
+  ChevronDown,
   ChevronRight,
   FileText,
   FilePlus,
@@ -252,41 +253,43 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
   }
 
   return (
-    <div className="flex h-[480px] min-h-[320px] flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       {/* Stage picker + status chip */}
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        {stages.map((s) => {
-          const k = stageKey(s);
-          const r = ROLE_STYLE[s.role];
-          const active = k === selectedKey;
-          const isLive = k === liveKey;
-          return (
-            <button
-              key={k}
-              type="button"
-              onClick={() => onPickStage(k)}
-              className={clsx(
-                "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono transition-colors",
-                active
-                  ? "border-ink bg-ink text-white"
-                  : "border-black/10 bg-white text-ink-muted hover:bg-black/5",
-              )}
-              title={`Started ${s.started_at}`}
-            >
-              <span
+      <div className="flex max-h-24 shrink-0 items-start gap-2 overflow-y-auto rounded-md border border-black/5 bg-white p-1.5 text-[11px]">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          {stages.map((s) => {
+            const k = stageKey(s);
+            const r = ROLE_STYLE[s.role];
+            const active = k === selectedKey;
+            const isLive = k === liveKey;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => onPickStage(k)}
                 className={clsx(
-                  "h-1.5 w-1.5 rounded-full",
-                  r.dot,
-                  isLive && isStreaming && "animate-pulseDot",
+                  "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono transition-colors",
+                  active
+                    ? "border-ink bg-ink text-white"
+                    : "border-black/10 bg-white text-ink-muted hover:bg-black/5",
                 )}
-                aria-hidden
-              />
-              <span>{r.label}</span>
-              <span className="opacity-70">#{s.attempt}</span>
-            </button>
-          );
-        })}
-        <div className="ml-auto">
+                title={`Started ${s.started_at}`}
+              >
+                <span
+                  className={clsx(
+                    "h-1.5 w-1.5 rounded-full",
+                    r.dot,
+                    isLive && isStreaming && "animate-pulseDot",
+                  )}
+                  aria-hidden
+                />
+                <span>{r.label}</span>
+                <span className="opacity-70">#{s.attempt}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="shrink-0">
           {isStreaming ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
               <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-emerald-500" />
@@ -307,7 +310,8 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
       <div
         ref={scrollerRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto rounded-md border border-black/5 bg-[var(--bg-muted,#fafafa)] px-3 py-3"
+        tabIndex={0}
+        className="min-h-[320px] flex-1 overflow-y-auto rounded-md border border-black/5 bg-[var(--bg-muted,#fafafa)] px-3 py-3 focus:outline-none"
       >
         {error && (
           <div className="mb-2 rounded bg-red-50 px-2 py-1 text-[11.5px] text-red-800 ring-1 ring-inset ring-red-200">

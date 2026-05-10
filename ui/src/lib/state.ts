@@ -307,6 +307,12 @@ export const useBoard = create<State>((set, get) => ({
           tokens_used: e.tokens_used,
           elapsed_seconds: e.elapsed_seconds,
           owner_pid: e.pid,
+          worker_input_tokens: e.worker_input_tokens,
+          worker_output_tokens: e.worker_output_tokens,
+          reviewer_input_tokens: e.reviewer_input_tokens,
+          reviewer_output_tokens: e.reviewer_output_tokens,
+          merger_input_tokens: e.merger_input_tokens,
+          merger_output_tokens: e.merger_output_tokens,
         });
         return;
       }

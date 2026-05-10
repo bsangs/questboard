@@ -125,6 +125,13 @@ export function CardTile({ card, draggable = false }: Props) {
   // double-display.
   const isPostBuild = card.post_build_active === true;
   const isHelperLive = isInProgress || isAiReviewing || isMerging || isPostBuild;
+  const activeRole: "worker" | "reviewer" | "merger" | null = isMerging
+    ? "merger"
+    : isAiReviewing
+    ? "reviewer"
+    : isInProgress
+    ? "worker"
+    : null;
 
   // Single-source status descriptor for the dedicated status line. Picks
   // ONE word per card (priority post-build > merging > reviewing > in
@@ -261,7 +268,7 @@ export function CardTile({ card, draggable = false }: Props) {
 
       {/* Per-role lifetime output tokens. Hidden chips for roles that
           haven't produced anything yet, so a fresh card stays clean. */}
-      <RoleTokenChips card={card} />
+      <RoleTokenChips card={card} activeRole={activeRole} />
 
       {/* Stuck */}
       {isStuck && card.stuck_question && (
@@ -302,17 +309,26 @@ export function CardTile({ card, draggable = false }: Props) {
 }
 
 /** Cumulative input + output tokens per helper role for this card. */
-function RoleTokenChips({ card }: { card: CardSummary }) {
+function RoleTokenChips({
+  card,
+  activeRole,
+}: {
+  card: CardSummary;
+  activeRole: "worker" | "reviewer" | "merger" | null;
+}) {
   const wi = card.worker_input_tokens ?? 0;
   const wo = card.worker_output_tokens ?? 0;
   const ri = card.reviewer_input_tokens ?? 0;
   const ro = card.reviewer_output_tokens ?? 0;
   const mi = card.merger_input_tokens ?? 0;
   const mo = card.merger_output_tokens ?? 0;
-  if (wi + wo + ri + ro + mi + mo === 0) return null;
+  const showWorker = activeRole === "worker" || wi > 0 || wo > 0;
+  const showReviewer = activeRole === "reviewer" || ri > 0 || ro > 0;
+  const showMerger = activeRole === "merger" || mi > 0 || mo > 0;
+  if (!showWorker && !showReviewer && !showMerger) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1 text-[10.5px] font-mono">
-      {(wi > 0 || wo > 0) && (
+      {showWorker && (
         <span
           className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 ring-1 ring-inset ring-emerald-200"
           title={`Worker — in ${wi.toLocaleString()} · out ${wo.toLocaleString()}`}
@@ -320,7 +336,7 @@ function RoleTokenChips({ card }: { card: CardSummary }) {
           W ↓{fmtTokensCompact(wi)} ↑{fmtTokensCompact(wo)}
         </span>
       )}
-      {(ri > 0 || ro > 0) && (
+      {showReviewer && (
         <span
           className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 ring-1 ring-inset ring-violet-200"
           title={`Reviewer — in ${ri.toLocaleString()} · out ${ro.toLocaleString()}`}
@@ -328,7 +344,7 @@ function RoleTokenChips({ card }: { card: CardSummary }) {
           R ↓{fmtTokensCompact(ri)} ↑{fmtTokensCompact(ro)}
         </span>
       )}
-      {(mi > 0 || mo > 0) && (
+      {showMerger && (
         <span
           className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700 ring-1 ring-inset ring-blue-200"
           title={`Merger — in ${mi.toLocaleString()} · out ${mo.toLocaleString()}`}

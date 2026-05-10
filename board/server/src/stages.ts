@@ -56,16 +56,22 @@ export interface CardStage {
 }
 
 interface TokenUsage {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
 }
 
-interface AssistantTurn {
+interface TranscriptEvent {
   type?: string;
   timestamp?: string;
   message?: { usage?: TokenUsage };
+  usage?: TokenUsage;
+  event?: {
+    type?: string;
+    message?: { usage?: TokenUsage };
+    usage?: TokenUsage;
+  };
 }
 
 /**
@@ -108,6 +114,69 @@ interface ParsedStats {
   ended_at: string | null;
 }
 
+interface StreamStats {
+  settledInput: number;
+  settledOutput: number;
+  lastContext: number;
+  currentUsage: TokenUsage | null;
+  sawUsage: boolean;
+}
+
+function usageInput(usage: TokenUsage): number {
+  return (
+    (usage.input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0)
+  );
+}
+
+function mergeUsage(prev: TokenUsage, next: TokenUsage): TokenUsage {
+  return {
+    input_tokens:
+      next.input_tokens != null && next.input_tokens > 0
+        ? next.input_tokens
+        : prev.input_tokens,
+    cache_creation_input_tokens:
+      next.cache_creation_input_tokens != null && next.cache_creation_input_tokens > 0
+        ? next.cache_creation_input_tokens
+        : prev.cache_creation_input_tokens,
+    cache_read_input_tokens:
+      next.cache_read_input_tokens != null && next.cache_read_input_tokens > 0
+        ? next.cache_read_input_tokens
+        : prev.cache_read_input_tokens,
+    output_tokens: next.output_tokens ?? prev.output_tokens,
+  };
+}
+
+function usageHasTokens(usage: TokenUsage): boolean {
+  return usageInput(usage) > 0 || (usage.output_tokens ?? 0) > 0;
+}
+
+function applyStreamEvent(stats: StreamStats, event: NonNullable<TranscriptEvent["event"]>): void {
+  if (event.type === "message_start") {
+    stats.currentUsage = event.message?.usage
+      ? mergeUsage({}, event.message.usage)
+      : {};
+    stats.sawUsage = stats.sawUsage || usageHasTokens(stats.currentUsage);
+    return;
+  }
+  if (event.type === "message_delta" && event.usage) {
+    stats.currentUsage = mergeUsage(stats.currentUsage ?? {}, event.usage);
+    stats.sawUsage = stats.sawUsage || usageHasTokens(stats.currentUsage);
+    return;
+  }
+  if (event.type === "message_stop" && stats.currentUsage) {
+    if (usageHasTokens(stats.currentUsage)) {
+      const currentInput = usageInput(stats.currentUsage);
+      stats.settledInput += currentInput;
+      stats.settledOutput += stats.currentUsage.output_tokens ?? 0;
+      stats.lastContext = currentInput;
+      stats.sawUsage = true;
+    }
+    stats.currentUsage = null;
+  }
+}
+
 /**
  * Walk every assistant turn in the transcript:
  *   - sum output_tokens
@@ -123,32 +192,71 @@ function parseTranscriptStats(path: string): ParsedStats {
   } catch {
     return { context_tokens: 0, input_tokens: 0, output_tokens: 0, ended_at: null };
   }
-  let context_tokens = 0;
-  let input_tokens = 0;
-  let output_tokens = 0;
+  let assistantContextTokens = 0;
+  let assistantInputTokens = 0;
+  let assistantOutputTokens = 0;
   let ended_at: string | null = null;
+  let resultInput: number | null = null;
+  let resultOutput: number | null = null;
+  const streamStats: StreamStats = {
+    settledInput: 0,
+    settledOutput: 0,
+    lastContext: 0,
+    currentUsage: null,
+    sawUsage: false,
+  };
   for (const line of raw.split(/\r?\n/)) {
     if (!line) continue;
-    let parsed: AssistantTurn;
+    let parsed: TranscriptEvent;
     try {
       parsed = JSON.parse(line);
     } catch {
       continue;
     }
-    if (parsed.type !== "assistant") continue;
-    const u = parsed.message?.usage;
     if (parsed.timestamp) ended_at = parsed.timestamp;
+    if (parsed.type === "stream_event" && parsed.event) {
+      applyStreamEvent(streamStats, parsed.event);
+      continue;
+    }
+    if (parsed.type !== "assistant" && parsed.type !== "result") continue;
+    const u = parsed.message?.usage ?? parsed.usage;
     if (!u) continue;
-    const turnInput =
-      (u.input_tokens ?? 0) +
-      (u.cache_creation_input_tokens ?? 0) +
-      (u.cache_read_input_tokens ?? 0);
-    input_tokens += turnInput;
-    output_tokens += u.output_tokens ?? 0;
+    const turnInput = usageInput(u);
+    if (parsed.type === "result") {
+      resultInput = turnInput;
+      resultOutput = u.output_tokens ?? 0;
+      continue;
+    }
+    assistantInputTokens += turnInput;
+    assistantOutputTokens += u.output_tokens ?? 0;
     // Overwrite each time so we end with the LAST turn's context size.
-    context_tokens = turnInput;
+    assistantContextTokens = turnInput;
   }
-  return { context_tokens, input_tokens, output_tokens, ended_at };
+  if (resultInput != null || resultOutput != null) {
+    const input_tokens = resultInput ?? 0;
+    const output_tokens = resultOutput ?? 0;
+    const currentInput = streamStats.currentUsage ? usageInput(streamStats.currentUsage) : 0;
+    const context_tokens = currentInput || streamStats.lastContext || assistantContextTokens || input_tokens;
+    return { context_tokens, input_tokens, output_tokens, ended_at };
+  }
+  if (streamStats.sawUsage) {
+    const currentInput = streamStats.currentUsage ? usageInput(streamStats.currentUsage) : 0;
+    const currentOutput = streamStats.currentUsage?.output_tokens ?? 0;
+    const input_tokens = streamStats.settledInput + currentInput;
+    const output_tokens = streamStats.settledOutput + currentOutput;
+    return {
+      context_tokens: currentInput || streamStats.lastContext,
+      input_tokens,
+      output_tokens,
+      ended_at,
+    };
+  }
+  return {
+    context_tokens: assistantContextTokens,
+    input_tokens: assistantInputTokens,
+    output_tokens: assistantOutputTokens,
+    ended_at,
+  };
 }
 
 export interface CardTokenTotals {
@@ -169,7 +277,10 @@ export interface CardTokenTotals {
  * here because each turn's `output_tokens` is the marginal cost of THAT
  * turn, not a snapshot.
  */
-export function getCardTokenTotals(cardId: string): CardTokenTotals {
+export function getCardTokenTotals(
+  cardId: string,
+  opts: { excludeTranscript?: string | null } = {},
+): CardTokenTotals {
   const totals: CardTokenTotals = {
     worker_input_tokens: 0,
     worker_output_tokens: 0,
@@ -182,6 +293,7 @@ export function getCardTokenTotals(cardId: string): CardTokenTotals {
   if (!existsSync(dir)) return totals;
   for (const name of readdirSync(dir)) {
     if (!name.endsWith(".jsonl")) continue;
+    if (opts.excludeTranscript && name === opts.excludeTranscript) continue;
     const meta = parseFilename(name);
     if (!meta) continue;
     let stats: ParsedStats;

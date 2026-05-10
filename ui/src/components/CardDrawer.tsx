@@ -318,7 +318,7 @@ export function CardDrawer() {
   // Mobile keeps the existing slide-in-from-right animation (animate-slideIn).
   const contentStyle: React.CSSProperties = isMobile
     ? { width: "100vw", height: "100vh", maxWidth: "100vw" }
-    : { width: `${width}px`, maxWidth: "none" };
+    : { width: `${width}px`, height: "100vh", maxWidth: "none" };
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => !o && close()}>
@@ -328,7 +328,7 @@ export function CardDrawer() {
           aria-label="Card detail"
           style={contentStyle}
           className={clsx(
-            "fixed inset-y-0 right-0 z-40 flex flex-col border-l border-black/10 bg-white shadow-drawer animate-slideIn",
+            "fixed inset-y-0 right-0 z-40 flex flex-col border-l border-black/10 bg-white shadow-drawer animate-slideIn focus:outline-none",
             // Suppress text-selection flicker while dragging the resize handle.
             resizing && "select-none",
           )}
@@ -377,6 +377,7 @@ function DrawerBody({
   const history = useBoard((s) => s.history[cardId]);
   const setComments = useBoard((s) => s.setComments);
   const setHistory = useBoard((s) => s.setHistory);
+  const patchCardLocal = useBoard((s) => s.patchCard);
   const pushToast = useBoard((s) => s.pushToast);
 
   const [full, setFull] = useState<Card | null>(null);
@@ -386,6 +387,10 @@ function DrawerBody({
   >("description");
   const [editingDescription, setEditingDescription] = useState(false);
   const [descDraft, setDescDraft] = useState<string>("");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState<string>("");
+  const [editingDeps, setEditingDeps] = useState(false);
+  const [depsDraft, setDepsDraft] = useState<string>("");
   const [reply, setReply] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -396,6 +401,8 @@ function DrawerBody({
     setStages([]);
     setTab("description");
     setEditingDescription(false);
+    setEditingTitle(false);
+    setEditingDeps(false);
     (async () => {
       try {
         const [data, st] = await Promise.all([
@@ -405,6 +412,8 @@ function DrawerBody({
         if (!alive) return;
         setFull(data.card);
         setDescDraft(data.card.description);
+        setTitleDraft(data.card.frontmatter.title);
+        setDepsDraft((data.card.frontmatter.deps ?? []).join(", "));
         setComments(cardId, data.comments);
         setHistory(cardId, data.history);
         setStages(st);
@@ -430,6 +439,8 @@ function DrawerBody({
     () => parseDoD(full?.description ?? ""),
     [full?.description],
   );
+
+  const currentDeps = full?.frontmatter.deps ?? card?.deps ?? [];
 
   if (!card) {
     return (
@@ -532,6 +543,44 @@ function DrawerBody({
       pushToast({ kind: "success", message: "Description saved." });
     });
 
+  const saveTitle = () =>
+    withBusy(async () => {
+      const title = titleDraft.trim();
+      if (!title) {
+        pushToast({ kind: "error", message: "Title cannot be empty." });
+        return;
+      }
+      if (title === card.title) {
+        setEditingTitle(false);
+        setTitleDraft(card.title);
+        return;
+      }
+      await patchCard(cardId, { title });
+      patchCardLocal(cardId, { title });
+      setFull((f) =>
+        f ? { ...f, frontmatter: { ...f.frontmatter, title } } : f,
+      );
+      setEditingTitle(false);
+      pushToast({ kind: "success", message: "Title saved." });
+    });
+
+  const saveDeps = () =>
+    withBusy(async () => {
+      const parsed = parseDepsDraft(depsDraft);
+      if (!parsed.ok) {
+        pushToast({ kind: "error", message: parsed.message });
+        return;
+      }
+      await patchCard(cardId, { deps: parsed.deps });
+      patchCardLocal(cardId, { deps: parsed.deps });
+      setFull((f) =>
+        f ? { ...f, frontmatter: { ...f.frontmatter, deps: parsed.deps } } : f,
+      );
+      setDepsDraft(parsed.deps.join(", "));
+      setEditingDeps(false);
+      pushToast({ kind: "success", message: "Dependencies saved." });
+    });
+
   return (
     <>
       {/* Header */}
@@ -568,9 +617,63 @@ function DrawerBody({
               }
             />
           </div>
-          <h2 className="truncate text-[16px] font-semibold leading-tight text-ink">
-            {card.title}
-          </h2>
+          {editingTitle ? (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <input
+                type="text"
+                value={titleDraft}
+                autoFocus
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void saveTitle();
+                  } else if (e.key === "Escape") {
+                    setEditingTitle(false);
+                    setTitleDraft(card.title);
+                  }
+                }}
+                disabled={busy}
+                className="min-w-0 flex-1 rounded border border-black/10 bg-white px-2 py-1 text-[15px] font-semibold leading-tight text-ink focus:border-ink focus:outline-none"
+                aria-label="Card title"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingTitle(false);
+                  setTitleDraft(card.title);
+                }}
+                disabled={busy}
+                className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveTitle}
+                disabled={busy || !titleDraft.trim()}
+                className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-black disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="truncate text-[16px] font-semibold leading-tight text-ink">
+                {card.title}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleDraft(card.title);
+                  setEditingTitle(true);
+                }}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-normal text-ink-muted hover:bg-black/5"
+              >
+                Edit
+              </button>
+            </div>
+          )}
           <p className="mt-1 text-[11px] text-ink-subtle">
             Created {fmtAbs(card.created_at)} · Updated {fmtAbs(card.updated_at)}
           </p>
@@ -655,10 +758,10 @@ function DrawerBody({
           tab. Hidden when the card has no transcripts yet. */}
       {stages.length > 0 && <StagesStrip stages={stages} />}
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      {/* Body: tabs stay fixed; only the active tab content scrolls. */}
+      <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
         {/* Tabs */}
-        <div className="mb-3 flex items-center gap-1 border-b border-black/5">
+        <div className="mb-3 flex shrink-0 items-center gap-1 overflow-x-auto border-b border-black/5">
           {(
             [
               "description",
@@ -688,7 +791,7 @@ function DrawerBody({
                 onClick={() => !disabled && setTab(t)}
                 disabled={disabled}
                 className={clsx(
-                  "-mb-px border-b-2 px-3 py-1.5 text-[12.5px] font-medium capitalize transition-colors",
+                  "-mb-px shrink-0 border-b-2 px-3 py-1.5 text-[12.5px] font-medium capitalize transition-colors",
                   tab === t
                     ? "border-ink text-ink"
                     : disabled
@@ -702,7 +805,8 @@ function DrawerBody({
           })}
         </div>
 
-        {tab === "description" && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-1 focus:outline-none" tabIndex={0}>
+          {tab === "description" && (
           <div className="space-y-4">
             <div className="rounded-md border border-black/5 bg-white">
               <div className="flex items-center justify-between border-b border-black/5 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-subtle">
@@ -752,6 +856,85 @@ function DrawerBody({
                   <Markdown cardId={cardId}>{full.description}</Markdown>
                 ) : (
                   <span className="text-ink-subtle">(no description)</span>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-md border border-black/5 bg-white">
+              <div className="flex items-center justify-between border-b border-black/5 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-subtle">
+                <span>Dependencies</span>
+                {!editingDeps ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDepsDraft(currentDeps.join(", "));
+                      setEditingDeps(true);
+                    }}
+                    className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5"
+                  >
+                    Edit
+                  </button>
+                ) : (
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingDeps(false);
+                        setDepsDraft(currentDeps.join(", "));
+                      }}
+                      className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveDeps}
+                      disabled={busy}
+                      className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-black disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="p-3 text-[12.5px]">
+                {editingDeps ? (
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      value={depsDraft}
+                      onChange={(e) => setDepsDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void saveDeps();
+                        } else if (e.key === "Escape") {
+                          setEditingDeps(false);
+                          setDepsDraft(currentDeps.join(", "));
+                        }
+                      }}
+                      disabled={busy}
+                      placeholder="0012, 0045, 0101"
+                      className="w-full rounded border border-black/10 bg-white px-2 py-1.5 font-mono text-[12.5px] focus:border-ink focus:outline-none"
+                      aria-label="Card dependencies"
+                    />
+                    <p className="text-[11px] text-ink-subtle">
+                      Four-digit card IDs, separated by commas or spaces.
+                    </p>
+                  </div>
+                ) : currentDeps.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {currentDeps.map((dep) => (
+                      <span
+                        key={dep}
+                        className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11.5px] text-ink-muted"
+                      >
+                        card-{dep}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-ink-subtle">(no dependencies)</span>
                 )}
               </div>
             </div>
@@ -836,10 +1019,11 @@ function DrawerBody({
             />
           </Suspense>
         )}
+        </div>
       </div>
 
       {/* Reply / actions */}
-      <footer className="border-t border-black/5 bg-white px-6 py-3">
+      <footer className="shrink-0 border-t border-black/5 bg-white px-6 py-3">
         <ReplyBox
           cardId={cardId}
           status={status}
@@ -1409,7 +1593,12 @@ function StagesStrip({ stages }: { stages: CardStage[] }) {
           )}
         </span>
       </div>
-      <ol className="space-y-0.5">
+      <ol
+        className={clsx(
+          "space-y-0.5 pr-1",
+          expanded && "max-h-36 overflow-y-auto",
+        )}
+      >
         {visible.map((s) => (
           <StageRow key={s.transcript} stage={s} />
         ))}
@@ -1627,6 +1816,23 @@ function StuckBanner({
       </div>
     </div>
   );
+}
+
+function parseDepsDraft(input: string):
+  | { ok: true; deps: string[] }
+  | { ok: false; message: string } {
+  const raw = input
+    .split(/[\s,]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const invalid = raw.filter((v) => !/^\d{4}$/.test(v));
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      message: `Invalid dependency ID${invalid.length === 1 ? "" : "s"}: ${invalid.join(", ")}`,
+    };
+  }
+  return { ok: true, deps: [...new Set(raw)] };
 }
 
 interface DoDItem {

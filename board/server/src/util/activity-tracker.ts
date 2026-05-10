@@ -17,7 +17,7 @@
  */
 import { db, updateCardTokenTotals } from "../db.js";
 import { broadcast } from "../sse.js";
-import { getCardTokenTotals } from "../stages.js";
+import { getCardTokenTotals, type CardTokenTotals, type StageRole } from "../stages.js";
 import { logger } from "../logger.js";
 
 const updateWorkerByCard = db.prepare(
@@ -48,6 +48,8 @@ export interface RecordActivityOpts {
    * card).
    */
   pid?: number;
+  /** Role for the active helper emitting activity. */
+  role?: StageRole;
   /**
    * Per-turn token usage from a single claude assistant frame. Both
    * fields default to 0 — pass whatever you have.
@@ -129,8 +131,45 @@ export function recordWorkerActivity(opts: RecordActivityOpts): void {
 
     // Recompute per-role lifetime totals from transcripts. Bounded by the
     // number of transcript files for this card — cheap enough per turn.
+    let tokenTotals: CardTokenTotals = {
+      worker_input_tokens: 0,
+      worker_output_tokens: 0,
+      reviewer_input_tokens: 0,
+      reviewer_output_tokens: 0,
+      merger_input_tokens: 0,
+      merger_output_tokens: 0,
+    };
     try {
-      updateCardTokenTotals(cardId, getCardTokenTotals(cardId));
+      tokenTotals = getCardTokenTotals(cardId);
+      if (opts.role === "worker") {
+        tokenTotals.worker_input_tokens = Math.max(
+          tokenTotals.worker_input_tokens,
+          newTokens,
+        );
+        tokenTotals.worker_output_tokens = Math.max(
+          tokenTotals.worker_output_tokens,
+          outputDelta,
+        );
+      } else if (opts.role === "reviewer") {
+        tokenTotals.reviewer_input_tokens = Math.max(
+          tokenTotals.reviewer_input_tokens,
+          newTokens,
+        );
+        tokenTotals.reviewer_output_tokens = Math.max(
+          tokenTotals.reviewer_output_tokens,
+          outputDelta,
+        );
+      } else if (opts.role === "merger") {
+        tokenTotals.merger_input_tokens = Math.max(
+          tokenTotals.merger_input_tokens,
+          newTokens,
+        );
+        tokenTotals.merger_output_tokens = Math.max(
+          tokenTotals.merger_output_tokens,
+          outputDelta,
+        );
+      }
+      updateCardTokenTotals(cardId, tokenTotals);
     } catch (err) {
       logger.error("token_totals_recompute_failed", {
         card_id: cardId,
@@ -142,8 +181,15 @@ export function recordWorkerActivity(opts: RecordActivityOpts): void {
       type: "worker_heartbeat",
       card_id: cardId,
       pid: workerRow?.pid ?? opts.pid ?? 0,
+      role: opts.role ?? null,
       tokens_used: newTokens,
       elapsed_seconds: elapsed ?? 0,
+      worker_input_tokens: tokenTotals.worker_input_tokens,
+      worker_output_tokens: tokenTotals.worker_output_tokens,
+      reviewer_input_tokens: tokenTotals.reviewer_input_tokens,
+      reviewer_output_tokens: tokenTotals.reviewer_output_tokens,
+      merger_input_tokens: tokenTotals.merger_input_tokens,
+      merger_output_tokens: tokenTotals.merger_output_tokens,
     });
   } catch (err) {
     logger.warn("activity_tracker_failed", {

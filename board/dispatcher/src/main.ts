@@ -7,7 +7,7 @@
  *   3. Run the boot reaper (recovery.ts) — mark dead in_progress workers stuck.
  *   4. Connect to the server SSE channel for card_status_changed / config_changed.
  *   5. Start a 2s poll loop as a belt-and-suspenders backup to SSE.
- *   6. Start the 30s heartbeat watchdog.
+ *   6. Start the 5s stats heartbeat and watchdog.
  *
  * Concurrency: the in-memory `active` map is the source of truth for what
  * the dispatcher itself spawned. The workers table (server-written) is
@@ -124,7 +124,7 @@ watchdog.start();
 
 // 2b. Stats reporter — queries SQLite workers table (so it survives
 //     dispatcher restarts), parses the latest transcript for each, and
-//     pushes tokens/elapsed to the server every 30s. Also reaps PIDs that
+//     pushes tokens/elapsed to the server every 5s. Also reaps PIDs that
 //     died across a dispatcher restart.
 const stats = new StatsReporter({
   db,
@@ -133,7 +133,7 @@ const stats = new StatsReporter({
   active,
   cardsDir: cfg.cardsDir,
 });
-stats.start(30_000);
+stats.start(5_000);
 
 // 3. Spawn loop. Single in-flight at a time via a tiny mutex flag — the
 //    server's workers table (UNIQUE on card_id via claim) is the actual

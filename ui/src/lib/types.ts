@@ -54,6 +54,7 @@ export interface CardSummary {
   attempts: number;
   stuck_reason: import("@questboard/core").StuckReason | null;
   stuck_question: string | null;
+  /** Current context-window tokens for the active/latest helper, not input+output usage. */
   tokens_used: number;
   elapsed_seconds: number;
   /**

@@ -84,7 +84,11 @@ const ClaimBody = z.object({
 
 const HeartbeatBody = z.object({
   pid: z.number().int().positive(),
+  role: z.enum(["worker", "reviewer", "merger"]).optional(),
   tokens_used: z.number().int().nonnegative(),
+  role_input_tokens: z.number().int().nonnegative().optional(),
+  role_output_tokens: z.number().int().nonnegative().optional(),
+  transcript: z.string().optional(),
   elapsed_seconds: z.number().int().nonnegative(),
 });
 
@@ -373,7 +377,16 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
     try {
       const { id } = CardIdParam.parse(req.params);
       const body = HeartbeatBody.parse(req.body);
-      recordHeartbeat(id, body.pid, body.tokens_used, body.elapsed_seconds);
+      recordHeartbeat(
+        id,
+        body.pid,
+        body.tokens_used,
+        body.elapsed_seconds,
+        body.role,
+        body.role_input_tokens,
+        body.role_output_tokens,
+        body.transcript,
+      );
       reply.send({ ok: true });
     } catch (err) {
       handleError(err, reply);
