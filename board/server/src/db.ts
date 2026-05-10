@@ -248,15 +248,35 @@ const stmts = {
            merger_output_tokens   = ?
      WHERE id = ?
   `),
+  recordDeletedCardTokenTotals: db.prepare(`
+    INSERT INTO deleted_card_token_totals(card_id, deleted_at, input_tokens, output_tokens)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(card_id) DO UPDATE SET
+      deleted_at = excluded.deleted_at,
+      input_tokens = excluded.input_tokens,
+      output_tokens = excluded.output_tokens
+  `),
   sumTokensTotal: db.prepare(`
+    WITH live AS (
+      SELECT
+        COALESCE(SUM(worker_input_tokens
+                   + reviewer_input_tokens
+                   + merger_input_tokens), 0) AS input_total,
+        COALESCE(SUM(worker_output_tokens
+                   + reviewer_output_tokens
+                   + merger_output_tokens), 0) AS output_total
+      FROM cards
+    ),
+    deleted AS (
+      SELECT
+        COALESCE(SUM(input_tokens), 0) AS input_total,
+        COALESCE(SUM(output_tokens), 0) AS output_total
+      FROM deleted_card_token_totals
+    )
     SELECT
-      COALESCE(SUM(worker_input_tokens
-                 + reviewer_input_tokens
-                 + merger_input_tokens), 0) AS input_total,
-      COALESCE(SUM(worker_output_tokens
-                 + reviewer_output_tokens
-                 + merger_output_tokens), 0) AS output_total
-    FROM cards
+      live.input_total + deleted.input_total AS input_total,
+      live.output_total + deleted.output_total AS output_total
+    FROM live, deleted
   `),
   recomputeCommentCount: db.prepare(`
     UPDATE cards SET comment_count = (
@@ -483,7 +503,25 @@ export function updateCardTokenTotals(
   );
 }
 
-/** Sum of input + output token totals across every card (incl. archived). */
+/** Preserve a hard-deleted card's token totals for dashboard lifetime stats. */
+export function recordDeletedCardTokenTotals(row: CardRow): void {
+  const inputTotal =
+    (row.worker_input_tokens ?? 0) +
+    (row.reviewer_input_tokens ?? 0) +
+    (row.merger_input_tokens ?? 0);
+  const outputTotal =
+    (row.worker_output_tokens ?? 0) +
+    (row.reviewer_output_tokens ?? 0) +
+    (row.merger_output_tokens ?? 0);
+  stmts.recordDeletedCardTokenTotals.run(
+    row.id,
+    new Date().toISOString(),
+    inputTotal,
+    outputTotal,
+  );
+}
+
+/** Sum of input + output token totals across live, archived, and deleted cards. */
 export function sumTokensTotal(): { input_total: number; output_total: number } {
   const row = stmts.sumTokensTotal.get() as
     | { input_total: number; output_total: number }

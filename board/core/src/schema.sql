@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS workers (
   tokens_used     INTEGER NOT NULL DEFAULT 0
 );
 
+-- Hard-deleted cards are removed from `cards`, but their lifetime token
+-- totals should remain in dashboard stats. This table is written just before
+-- the card row is deleted.
+CREATE TABLE IF NOT EXISTS deleted_card_token_totals (
+  card_id       TEXT PRIMARY KEY,
+  deleted_at    TEXT NOT NULL,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS meta (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL

@@ -45,9 +45,15 @@ export function StatsPanel() {
   const done = stats.alerts_24h?.done ?? 0;
   const inTotal = stats.tokens_input_total ?? 0;
   const outTotal = stats.tokens_output_total ?? 0;
+  const allTotal = stats.tokens_total ?? inTotal + outTotal;
 
   return (
     <div className="hidden items-center gap-2 text-[12px] text-ink-muted md:flex">
+      <Pill
+        label="Σ total"
+        value={fmtTokens(allTotal)}
+        accent="bg-slate-100 text-slate-700"
+      />
       <Pill
         label="↓ total"
         value={fmtTokens(inTotal)}

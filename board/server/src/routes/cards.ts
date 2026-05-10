@@ -9,6 +9,8 @@ import {
   listAllCards,
   listAllDepsAndBlocked,
   listDeps,
+  recordDeletedCardTokenTotals,
+  runWriteTx,
   upsertCardRow,
 } from "../db.js";
 import {
@@ -314,7 +316,10 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
       const { join } = await import("node:path");
       const { env } = await import("../env.js");
       rmSync(join(env.CARDS_DIR, id), { recursive: true, force: true });
-      db.prepare("DELETE FROM cards WHERE id = ?").run(id);
+      runWriteTx(() => {
+        recordDeletedCardTokenTotals(row);
+        db.prepare("DELETE FROM cards WHERE id = ?").run(id);
+      });
       // Broadcast so the UI removes the card from the board immediately.
       // Reusing `card_archived` since the UI already wires it to
       // removeCard(); the server side never produces a duplicate event

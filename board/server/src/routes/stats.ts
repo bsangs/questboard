@@ -29,6 +29,7 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
     const tokens24h = (db
       .prepare("SELECT COALESCE(SUM(tokens_used), 0) AS s FROM workers")
       .get() as { s: number }).s;
+    const tokenTotals = sumTokensTotal();
 
     reply.send({
       active_workers: activeWorkerCount(),
@@ -38,12 +39,9 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       tokens_24h: tokens24h,
       // Lifetime input + output tokens (incl. archived). Kept legacy
       // `tokens_total` = input + output for back-compat with old UI.
-      tokens_total: (() => {
-        const t = sumTokensTotal();
-        return t.input_total + t.output_total;
-      })(),
-      tokens_input_total: sumTokensTotal().input_total,
-      tokens_output_total: sumTokensTotal().output_total,
+      tokens_total: tokenTotals.input_total + tokenTotals.output_total,
+      tokens_input_total: tokenTotals.input_total,
+      tokens_output_total: tokenTotals.output_total,
       alerts_24h: {
         stuck: stuck24h,
         human_review: review24h,
