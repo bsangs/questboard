@@ -1,5 +1,9 @@
-# Claude Code local state.
+# Local AI coding agent instructions/state.
+AGENTS.md
+CLAUDE.md
+.agents/
 .claude/
+.codex/
 
 # Environment files.
 .env
