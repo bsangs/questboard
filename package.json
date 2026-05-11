@@ -1,6 +1,6 @@
 {
   "name": "questboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Companion app that runs multiple Claude Code workers in parallel against your Git repository, with a kanban-style review board.",
   "license": "MIT",
   "type": "module",
