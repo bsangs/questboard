@@ -149,6 +149,12 @@ export function dropTargetsFor(card: CardSummary): CardStatus[] {
   return card.merged_sha == null ? ["ready"] : [];
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
 export function Board() {
   const cards = useBoard((s) => s.cards);
   const setCards = useBoard((s) => s.setCards);
@@ -159,8 +165,12 @@ export function Board() {
   const selected = useBoard((s) => s.selected);
   const clearSelection = useBoard((s) => s.clearSelection);
   const patchCardLocal = useBoard((s) => s.patchCard);
+  const setNewCardOpen = useBoard((s) => s.setNewCardOpen);
+  const setComposerOpen = useBoard((s) => s.setComposerOpen);
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [cardsLoading, setCardsLoading] = useState(true);
+  const hasLoadedCardsRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -168,14 +178,18 @@ export function Board() {
 
   // ─── Initial fetch ────────────────────────────────────────────────────────
   const refreshCards = useCallback(async () => {
+    if (!hasLoadedCardsRef.current) setCardsLoading(true);
     try {
       const summaries = await listCards();
       setCards(summaries);
+      hasLoadedCardsRef.current = true;
     } catch (e) {
       pushToast({
         kind: "error",
         message: `Failed to load cards: ${e instanceof Error ? e.message : ""}`,
       });
+    } finally {
+      setCardsLoading(false);
     }
   }, [setCards, pushToast]);
 
@@ -187,6 +201,36 @@ export function Board() {
         // Config endpoint not critical to render; ignore.
       });
   }, [refreshCards, setConfig]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setNewCardOpen(true);
+        return;
+      }
+      if (e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        setComposerOpen(true);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (selected.size > 0) {
+          e.preventDefault();
+          clearSelection();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    clearSelection,
+    selected.size,
+    setComposerOpen,
+    setNewCardOpen,
+  ]);
 
   // ─── SSE wiring ──────────────────────────────────────────────────────────
   // SSE is now the realtime channel. Periodic polling has been dropped —
@@ -444,6 +488,7 @@ export function Board() {
                   droppable={droppable}
                   draggable={draggable}
                   isDragging={!!draggingCard}
+                  loading={cardsLoading}
                 />
               );
             })}

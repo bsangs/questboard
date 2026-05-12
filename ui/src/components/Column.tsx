@@ -45,6 +45,8 @@ interface Props {
   /** Whether cards in this column are draggable. */
   draggable?: boolean;
   isDragging?: boolean;
+  loading?: boolean;
+  emptyMessage?: string;
 }
 
 /**
@@ -70,6 +72,8 @@ export function Column({
   droppable = false,
   draggable = false,
   isDragging = false,
+  loading = false,
+  emptyMessage,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({
     id: status,
@@ -162,9 +166,11 @@ export function Column({
               -click to multi-select for archive
             </div>
           )}
-          {cards.length === 0 ? (
+          {loading ? (
+            <ColumnSkeleton />
+          ) : cards.length === 0 ? (
             <EmptyState>
-              {EMPTY_MSG[status] ?? "—"}
+              {emptyMessage ?? EMPTY_MSG[status] ?? "—"}
             </EmptyState>
           ) : (
             cards.map((c) => (
@@ -186,6 +192,32 @@ export function Column({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ColumnSkeleton() {
+  return (
+    <div className="space-y-2" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="rounded-md border border-border bg-surface p-3 shadow-tile"
+        >
+          <div className="mb-2 flex items-center gap-2">
+            <span className="h-4 w-8 animate-pulse rounded-sm bg-surface-muted" />
+            <span className="h-3 w-12 animate-pulse rounded-sm bg-surface-muted" />
+          </div>
+          <div className="space-y-1.5">
+            <span className="block h-3 w-full animate-pulse rounded-sm bg-surface-muted" />
+            <span className="block h-3 w-2/3 animate-pulse rounded-sm bg-surface-muted" />
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <span className="h-3 w-10 animate-pulse rounded-sm bg-surface-muted" />
+            <span className="h-3 w-14 animate-pulse rounded-sm bg-surface-muted" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -175,9 +175,17 @@ export function CardTile({ card, draggable = false }: Props) {
       {...drag.listeners}
       role="button"
       tabIndex={0}
+      aria-label={`Open card-${card.id}: ${card.title}`}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (e.key === "Enter") openDrawer(card.id);
+        if (e.key === "Enter") {
+          e.preventDefault();
+          openDrawer(card.id);
+        }
+        if (e.key === " " && card.status === "done") {
+          e.preventDefault();
+          toggleSelect(card.id, true);
+        }
       }}
       className={clsx(
         "group relative cursor-pointer select-none rounded-md border border-border bg-surface p-3",

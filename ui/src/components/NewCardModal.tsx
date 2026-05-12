@@ -12,6 +12,7 @@ import {
 import { useBoard } from "@/lib/state";
 import type { CardFlavor } from "@/lib/types";
 import clsx from "clsx";
+import { CardDependencyPicker } from "./CardDependencyPicker";
 import { Button, IconButton, Input, Select, Textarea } from "./ui";
 
 const FLAVORS: CardFlavor[] = ["feature", "bug", "refactor", "chore", "docs"];
@@ -33,7 +34,7 @@ export function NewCardModal() {
   const [priority, setPriority] = useState<1 | 2 | 3>(2);
   const [flavor, setFlavor] = useState<CardFlavor>("feature");
   const [scope, setScope] = useState<string>(""); // "" = no scope
-  const [depsText, setDepsText] = useState("");
+  const [deps, setDeps] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   // Upload-pool token: minted on first attachment, kept stable across the
@@ -66,7 +67,7 @@ export function NewCardModal() {
         ? defaultScope
         : "",
     );
-    setDepsText("");
+    setDeps([]);
     // Drop the upload-pool token; the server's 24h sweep will GC the
     // orphaned files. Resetting on Cancel is fine — workers can't see
     // the pool, only the post-promote per-card dir.
@@ -105,11 +106,6 @@ export function NewCardModal() {
     }
     setBusy(true);
     try {
-      const deps = depsText
-        .split(/[\s,]+/)
-        .map((s) => s.replace(/^#/, "").trim())
-        .filter((s) => /^\d{4}$/.test(s));
-
       const created = await createCard({
         title: title.trim(),
         description,
@@ -289,13 +285,12 @@ export function NewCardModal() {
 
             <Field
               label="Dependencies"
-              hint="Card IDs (4-digit), comma or space separated."
+              hint="Select existing cards this one must wait for."
             >
-              <Input
-                value={depsText}
-                onChange={(e) => setDepsText(e.target.value)}
-                placeholder="e.g. 0038, 0040"
-                className="font-mono text-[12.5px]"
+              <CardDependencyPicker
+                value={deps}
+                onChange={setDeps}
+                disabled={busy}
               />
             </Field>
           </div>

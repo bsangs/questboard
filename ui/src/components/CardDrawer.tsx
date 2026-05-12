@@ -42,6 +42,7 @@ import {
   restoreCard,
 } from "@/lib/api";
 import { useBoard } from "@/lib/state";
+import { CardDependencyPicker } from "./CardDependencyPicker";
 import { Markdown } from "./Markdown";
 import type {
   Card,
@@ -383,7 +384,7 @@ function DrawerBody({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState<string>("");
   const [editingDeps, setEditingDeps] = useState(false);
-  const [depsDraft, setDepsDraft] = useState<string>("");
+  const [depsDraft, setDepsDraft] = useState<string[]>([]);
   const [reply, setReply] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -406,7 +407,7 @@ function DrawerBody({
         setFull(data.card);
         setDescDraft(data.card.description);
         setTitleDraft(data.card.frontmatter.title);
-        setDepsDraft((data.card.frontmatter.deps ?? []).join(", "));
+        setDepsDraft(data.card.frontmatter.deps ?? []);
         setComments(cardId, data.comments);
         setHistory(cardId, data.history);
         setStages(st);
@@ -559,17 +560,11 @@ function DrawerBody({
 
   const saveDeps = () =>
     withBusy(async () => {
-      const parsed = parseDepsDraft(depsDraft);
-      if (!parsed.ok) {
-        pushToast({ kind: "error", message: parsed.message });
-        return;
-      }
-      await patchCard(cardId, { deps: parsed.deps });
-      patchCardLocal(cardId, { deps: parsed.deps });
+      await patchCard(cardId, { deps: depsDraft });
+      patchCardLocal(cardId, { deps: depsDraft });
       setFull((f) =>
-        f ? { ...f, frontmatter: { ...f.frontmatter, deps: parsed.deps } } : f,
+        f ? { ...f, frontmatter: { ...f.frontmatter, deps: depsDraft } } : f,
       );
-      setDepsDraft(parsed.deps.join(", "));
       setEditingDeps(false);
       pushToast({ kind: "success", message: "Dependencies saved." });
     });
@@ -836,7 +831,7 @@ function DrawerBody({
                   <button
                     type="button"
                     onClick={() => {
-                      setDepsDraft(currentDeps.join(", "));
+                      setDepsDraft(currentDeps);
                       setEditingDeps(true);
                     }}
                     className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted"
@@ -849,7 +844,7 @@ function DrawerBody({
                       type="button"
                       onClick={() => {
                         setEditingDeps(false);
-                        setDepsDraft(currentDeps.join(", "));
+                        setDepsDraft(currentDeps);
                       }}
                       className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted"
                     >
@@ -868,29 +863,12 @@ function DrawerBody({
               </div>
               <div className="p-3 text-[12.5px]">
                 {editingDeps ? (
-                  <div className="space-y-1.5">
-                    <input
-                      type="text"
-                      value={depsDraft}
-                      onChange={(e) => setDepsDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void saveDeps();
-                        } else if (e.key === "Escape") {
-                          setEditingDeps(false);
-                          setDepsDraft(currentDeps.join(", "));
-                        }
-                      }}
-                      disabled={busy}
-                      placeholder="0012, 0045, 0101"
-                      className="w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-[12.5px] focus:border-ink focus:outline-none"
-                      aria-label="Card dependencies"
-                    />
-                    <p className="text-[11px] text-ink-subtle">
-                      Four-digit card IDs, separated by commas or spaces.
-                    </p>
-                  </div>
+                  <CardDependencyPicker
+                    value={depsDraft}
+                    onChange={setDepsDraft}
+                    currentCardId={cardId}
+                    disabled={busy}
+                  />
                 ) : currentDeps.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {currentDeps.map((dep) => (
@@ -1749,23 +1727,6 @@ function StuckBanner({
       </div>
     </div>
   );
-}
-
-function parseDepsDraft(input: string):
-  | { ok: true; deps: string[] }
-  | { ok: false; message: string } {
-  const raw = input
-    .split(/[\s,]+/)
-    .map((v) => v.trim())
-    .filter(Boolean);
-  const invalid = raw.filter((v) => !/^\d{4}$/.test(v));
-  if (invalid.length > 0) {
-    return {
-      ok: false,
-      message: `Invalid dependency ID${invalid.length === 1 ? "" : "s"}: ${invalid.join(", ")}`,
-    };
-  }
-  return { ok: true, deps: [...new Set(raw)] };
 }
 
 interface DoDItem {
