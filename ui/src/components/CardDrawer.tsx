@@ -44,6 +44,7 @@ import {
 import { useBoard } from "@/lib/state";
 import { CardDependencyPicker } from "./CardDependencyPicker";
 import { Markdown } from "./Markdown";
+import { Select } from "./ui";
 import type {
   Card,
   CardFlavor,
@@ -163,7 +164,7 @@ const CardTimeline = lazy(() =>
 
 const KIND_STYLE: Record<CommentKind, string> = {
   stuck: "bg-amber-50 border-amber-200",
-  answer: "bg-blue-50 border-blue-200",
+  answer: "bg-accent-soft border-accent",
   resumed: "bg-emerald-50 border-emerald-200",
   review_note: "bg-amber-50 border-amber-200",
   note: "bg-slate-50 border-slate-200",
@@ -899,7 +900,7 @@ function DrawerBody({
                         checked={item.checked}
                         readOnly
                         aria-label={item.text}
-                        className="mt-0.5 h-3.5 w-3.5 cursor-not-allowed accent-emerald-600"
+                        className="mt-0.5 h-3.5 w-3.5 cursor-not-allowed accent-[var(--accent)]"
                       />
                       <span
                         className={clsx(
@@ -1189,7 +1190,7 @@ function ReplyBox({
             <button
               onClick={onApprove}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:bg-accent-strong disabled:opacity-50"
             >
               <CheckCircle2 className="h-3.5 w-3.5" /> Approve & Merge
             </button>
@@ -1431,11 +1432,11 @@ function InlineMetaSelectors({
   };
 
   const selectCls =
-    "rounded bg-gray-50 px-1.5 py-0.5 font-mono text-[11px] text-ink hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-blue-500/40";
+    "h-6 min-h-6 w-auto min-w-[82px] bg-gray-50 py-0.5 pl-1.5 pr-7 font-mono text-[11px] text-ink shadow-none hover:bg-gray-100 disabled:opacity-50";
 
   return (
     <>
-      <select
+      <Select
         className={selectCls}
         value={card.status}
         disabled={statusDisabled}
@@ -1448,9 +1449,9 @@ function InlineMetaSelectors({
             {STATUS_LABEL[s]}
           </option>
         ))}
-      </select>
+      </Select>
       <span className="text-ink-subtle">·</span>
-      <select
+      <Select
         className={selectCls}
         value={scope ?? ""}
         onChange={(e) =>
@@ -1465,9 +1466,9 @@ function InlineMetaSelectors({
             {s.label}
           </option>
         ))}
-      </select>
+      </Select>
       <span className="text-ink-subtle">·</span>
-      <select
+      <Select
         className={selectCls}
         value={card.priority}
         onChange={(e) =>
@@ -1479,9 +1480,9 @@ function InlineMetaSelectors({
         <option value={1}>P1</option>
         <option value={2}>P2</option>
         <option value={3}>P3</option>
-      </select>
+      </Select>
       <span className="text-ink-subtle">·</span>
-      <select
+      <Select
         className={selectCls}
         value={card.flavor}
         onChange={(e) => onPatch({ flavor: e.target.value as CardFlavor })}
@@ -1493,7 +1494,7 @@ function InlineMetaSelectors({
             {f}
           </option>
         ))}
-      </select>
+      </Select>
       <span className="text-ink-subtle">·</span>
       <span>{card.language}</span>
     </>
@@ -1585,9 +1586,9 @@ const STAGE_ROLE_STYLE: Record<
   CardStage["role"],
   { dot: string; label: string; text: string }
 > = {
-  worker: { dot: "bg-emerald-500", label: "in_progress", text: "text-emerald-700" },
+  worker: { dot: "bg-accent", label: "in_progress", text: "text-accent-strong" },
   reviewer: { dot: "bg-amber-500", label: "ai_review", text: "text-amber-700" },
-  merger: { dot: "bg-blue-500", label: "merging", text: "text-blue-700" },
+  merger: { dot: "bg-slate-500", label: "merging", text: "text-slate-700" },
 };
 
 function StageRow({ stage }: { stage: CardStage }) {
@@ -1682,16 +1683,16 @@ function StuckBanner({
   const totalAttempts = postBuildAttempts.length;
 
   return (
-    <div className="shrink-0 border-b border-blue-200 bg-blue-50 px-6 py-3">
-      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase text-blue-800">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
+    <div className="shrink-0 border-b border-accent bg-accent-soft px-6 py-3">
+      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase text-accent-strong">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
         Stuck — code already on{" "}
-        <code className="rounded bg-blue-100 px-1 py-0.5 font-mono text-[10.5px]">
+        <code className="rounded bg-surface px-1 py-0.5 font-mono text-[10.5px]">
           origin/main
         </code>{" "}
         @ <span className="font-mono">{sha12}</span>
       </div>
-      <div className="text-[12.5px] text-blue-900">
+      <div className="text-[12.5px] text-ink">
         {lastFailure ? (
           <>
             Prior post-build/deploy step failed{" "}
@@ -1707,7 +1708,7 @@ function StuckBanner({
         {totalAttempts > 0 && (
           <>
             {" "}
-            <span className="text-blue-700">
+            <span className="text-accent-strong">
               Auto-retried {transientStreak}/{3} times ·{" "}
               {totalAttempts} attempt{totalAttempts === 1 ? "" : "s"} total.
             </span>
@@ -1719,7 +1720,7 @@ function StuckBanner({
           type="button"
           onClick={onForceDone}
           disabled={busy}
-          className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:bg-accent-strong disabled:opacity-50"
           title="Mark the card done; merged_sha is preserved for audit"
         >
           Mark Done

@@ -13,7 +13,7 @@ import { useBoard } from "@/lib/state";
 import type { CardFlavor } from "@/lib/types";
 import clsx from "clsx";
 import { CardDependencyPicker } from "./CardDependencyPicker";
-import { Button, IconButton, Input, Select, Textarea } from "./ui";
+import { Button, Field, IconButton, Input, Select, Textarea } from "./ui";
 
 const FLAVORS: CardFlavor[] = ["feature", "bug", "refactor", "chore", "docs"];
 
@@ -313,30 +313,5 @@ export function NewCardModal() {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  required,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <div className="mb-1 flex items-center justify-between text-[11.5px] font-medium uppercase text-ink-subtle">
-        <span>
-          {label}
-          {required && <span className="text-red-500"> *</span>}
-        </span>
-        {hint && <span className="text-[10.5px] text-ink-subtle">{hint}</span>}
-      </div>
-      {children}
-    </label>
   );
 }

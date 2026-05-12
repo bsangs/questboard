@@ -14,7 +14,7 @@ import { useMemo, useState } from "react";
 import { decideComposerTool } from "@/lib/composer";
 import { useBoard } from "@/lib/state";
 import type { ComposerPendingToolUse } from "@/lib/types";
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 
 interface Proposed {
   slug: string;
@@ -251,27 +251,5 @@ export function ComposerSavePlanPreview({ pending, threadId }: Props) {
         )}
       </div>
     </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="mt-2 block first:mt-0">
-      <div className="mb-0.5 flex items-center justify-between text-[10.5px] font-medium uppercase text-ink-subtle">
-        <span>{label}</span>
-        {hint && (
-          <span className="text-[10px] normal-case text-red-700">{hint}</span>
-        )}
-      </div>
-      {children}
-    </label>
   );
 }

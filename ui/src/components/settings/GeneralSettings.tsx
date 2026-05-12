@@ -3,6 +3,7 @@
 import { patchConfig } from "@/lib/api";
 import { LANGUAGE_OPTIONS } from "@/lib/languages";
 import { useBoard } from "@/lib/state";
+import { Select } from "@/components/ui";
 import { BasePromptSettings } from "./BasePromptSettings";
 import { SettingsSection as Section, Toggle } from "./shared";
 
@@ -88,11 +89,11 @@ export function GeneralSettings({
         <p className="mb-2 text-[11.5px] text-ink-subtle">
           Pre-selected when creating a new card.
         </p>
-        <select
+        <Select
           value={config?.default_scope ?? ""}
           disabled={busy || !config || (config?.scopes ?? []).length === 0}
           onChange={(e) => update({ default_scope: e.target.value || null })}
-          className="w-full rounded border border-border-strong px-2 py-1 text-[12.5px] disabled:opacity-50"
+          className="text-[12.5px] disabled:opacity-50"
         >
           <option value="">(none)</option>
           {(config?.scopes ?? []).map((s) => (
@@ -100,22 +101,22 @@ export function GeneralSettings({
               {s.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Section>
 
       <Section title="Default language">
-        <select
+        <Select
           value={config?.default_language ?? "en"}
           disabled={busy || !config}
           onChange={(e) => update({ default_language: e.target.value })}
-          className="w-full rounded border border-border-strong px-2 py-1 text-[12.5px] disabled:opacity-50"
+          className="text-[12.5px] disabled:opacity-50"
         >
           {LANGUAGE_OPTIONS.map((language) => (
             <option key={language.code} value={language.code}>
               {language.label}
             </option>
           ))}
-        </select>
+        </Select>
         <p className="mt-1 text-[11.5px] text-ink-subtle">
           Stored as ISO 639-1; shown here as language names.
         </p>

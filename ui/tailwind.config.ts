@@ -59,7 +59,7 @@ const config: Config = {
         tile: "var(--shadow-card)",
         tileHover: "var(--shadow-card-hover)",
         popover: "var(--shadow-popover)",
-        drawer: "-18px 0 48px rgba(15,23,42,0.14)",
+        drawer: "-18px 0 54px rgba(15,23,42,0.16)",
       },
       keyframes: {
         pulseDot: {

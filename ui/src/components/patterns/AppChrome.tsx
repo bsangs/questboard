@@ -16,7 +16,7 @@ export function AppHeader({
   return (
     <header
       className={clsx(
-        "sticky top-0 z-20 flex min-h-14 items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur md:gap-4 md:px-5",
+        "sticky top-0 z-20 flex min-h-14 items-center gap-3 border-b border-border bg-surface/88 px-4 backdrop-blur md:gap-4 md:px-5",
         className,
       )}
     >
@@ -35,7 +35,7 @@ export function AppRail({
   return (
     <aside
       className={clsx(
-        "flex w-14 shrink-0 flex-col items-center border-r border-border bg-surface/80 py-3",
+        "flex w-14 shrink-0 flex-col items-center border-r border-border bg-surface/72 py-3 backdrop-blur",
         className,
       )}
     >
@@ -111,7 +111,7 @@ export function SideNavButton({
         "rounded-md px-2.5 py-2 text-left text-[12.5px] font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]",
         active
-          ? "bg-ink text-white"
+          ? "bg-accent-soft text-accent-strong ring-1 ring-inset ring-accent"
           : "text-ink-muted hover:bg-surface-muted hover:text-ink",
         className,
       )}

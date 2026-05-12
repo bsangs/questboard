@@ -13,6 +13,7 @@ import clsx from "clsx";
 import {
   Archive,
   ChevronDown,
+  CircleDot,
   MessageSquarePlus,
   Settings2,
 } from "lucide-react";
@@ -45,6 +46,7 @@ import {
   MetricPill,
   RailLink,
   SelectionBar,
+  StatusDot,
 } from "./patterns";
 import { StatsPanel } from "./StatsPanel";
 import { Toaster } from "./Toaster";
@@ -74,6 +76,12 @@ const STATIC_ALLOWED_DROPS: Record<CardStatus, CardStatus[]> = {
   done: [],
   cancelled: [],
 };
+
+const STATUS_LABEL = new Map<CardStatus, string>(
+  COLUMNS.map((column) => [column.id, column.label]),
+);
+
+const WORKBENCH_OPEN_KEY = "questboard:workbenchOpen";
 
 const DEFAULT_CONFIG_FALLBACK: BoardConfig = {
   version: 2,
@@ -170,6 +178,7 @@ export function Board() {
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [cardsLoading, setCardsLoading] = useState(true);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const hasLoadedCardsRef = useRef(false);
 
   const sensors = useSensors(
@@ -201,6 +210,23 @@ export function Board() {
         // Config endpoint not critical to render; ignore.
       });
   }, [refreshCards, setConfig]);
+
+  useEffect(() => {
+    try {
+      setWorkbenchOpen(window.localStorage.getItem(WORKBENCH_OPEN_KEY) === "1");
+    } catch {
+      // Default is collapsed when localStorage is unavailable.
+    }
+  }, []);
+
+  const setWorkbenchOpenPersisted = useCallback((next: boolean) => {
+    setWorkbenchOpen(next);
+    try {
+      window.localStorage.setItem(WORKBENCH_OPEN_KEY, next ? "1" : "0");
+    } catch {
+      // Ignore storage failures; the UI still toggles for this session.
+    }
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -410,7 +436,20 @@ export function Board() {
   const concurrencyLimit =
     useBoard((s) => s.stats?.concurrency_limit) ?? config?.concurrency_limit ?? 8;
   const queuedCount = useBoard((s) => s.stats?.queued_cards ?? 0);
-
+  const attentionCards = useMemo(
+    () =>
+      [
+        ...(grouped.stuck ?? []),
+        ...(grouped.human_review ?? []),
+        ...(grouped.ai_review ?? []),
+        ...(grouped.merging ?? []),
+      ].slice(0, 8),
+    [grouped],
+  );
+  const activeCards = grouped.in_progress ?? [];
+  const readyCards = grouped.ready ?? [];
+  const doneCards = grouped.done ?? [];
+  const totalCards = Object.keys(cards).length;
   return (
     <AppShell>
       {/* Top bar — condenses on mobile: title + a couple essentials,
@@ -419,7 +458,7 @@ export function Board() {
         <h1 className="flex items-center gap-2 text-[14.5px] font-semibold">
           <span
             aria-hidden
-            className="inline-block h-2 w-2 rounded-full bg-emerald-500"
+            className="inline-block h-2 w-2 rounded-full bg-accent"
           />
           <span className="hidden sm:inline">questboard</span>
           <span className="sm:hidden">questboard</span>
@@ -449,59 +488,96 @@ export function Board() {
 
       <div className="flex min-h-0 flex-1">
         <AppSidebar />
-
-        {/* Board */}
-        <DndContext
-          sensors={sensors}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          onDragCancel={() => setActiveDragId(null)}
+        <main
+          className={clsx(
+            "grid min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] bg-bg md:grid-rows-1",
+            workbenchOpen
+              ? "md:grid-cols-[320px_minmax(0,1fr)]"
+              : "md:grid-cols-[48px_minmax(0,1fr)]",
+          )}
         >
-          <div
-            className={clsx(
-              "flex min-w-0 flex-1 gap-3 bg-bg px-4 py-4",
-              // Desktop: horizontal kanban scroll (unchanged).
-              // Mobile: vertical stack of full-width sections that scroll the page.
-              "flex-col overflow-y-auto md:flex-row md:overflow-x-auto md:overflow-y-hidden",
-            )}
-          >
-            {COLUMNS.map((col) => {
-              const droppable =
-                !!draggingCard && allowedTargets.includes(col.id);
-              // A column is "draggable from" iff there's at least one allowed
-              // target out of it. We use the STATIC table here as a coarse
-              // signal — the per-card `dropTargetsFor` runs at drag-start, so
-              // a stuck card with merged_sha will still be picked up but find
-              // no valid targets and bounce back. (Marking the column as a
-              // whole non-draggable would block the merged_sha=null cards
-              // that DO have a valid Ready target.)
-              const draggable =
-                col.id === "stuck"
-                  ? true
-                  : (STATIC_ALLOWED_DROPS[col.id]?.length ?? 0) > 0;
-              return (
-                <Column
-                  key={col.id}
-                  status={col.id}
-                  label={col.label}
-                  cards={grouped[col.id] ?? []}
-                  droppable={droppable}
-                  draggable={draggable}
-                  isDragging={!!draggingCard}
-                  loading={cardsLoading}
-                />
-              );
-            })}
-          </div>
+          <WorkbenchPanel
+            open={workbenchOpen}
+            onOpenChange={setWorkbenchOpenPersisted}
+            attentionCards={attentionCards}
+            activeCards={activeCards}
+            readyCards={readyCards}
+            totalCards={totalCards}
+            activeWorkers={activeWorkers}
+            concurrencyLimit={concurrencyLimit}
+            queuedCount={queuedCount}
+            doneCount={doneCards.length}
+          />
 
-          <DragOverlay dropAnimation={null}>
-            {draggingCard ? (
-              <div className="w-[260px] rotate-1">
-                <CardTile card={draggingCard} />
+          <section className="flex min-h-0 min-w-0 flex-col border-t border-border bg-bg md:border-l md:border-t-0">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface/72 px-4 py-3 backdrop-blur">
+              <div className="min-w-0">
+                <h2 className="text-[13px] font-semibold text-ink">
+                  Board lanes
+                </h2>
+                <p className="truncate text-[11.5px] text-ink-subtle">
+                  Drag cards across state lanes; use the workbench for attention and active queues.
+                </p>
               </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+              <div className="hidden items-center gap-2 md:flex">
+                <MetricPill label="attention" value={attentionCards.length} tone={attentionCards.length > 0 ? "amber" : "neutral"} />
+                <MetricPill label="ready" value={readyCards.length} />
+              </div>
+            </div>
+
+            {/* Board */}
+            <DndContext
+              sensors={sensors}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDragCancel={() => setActiveDragId(null)}
+            >
+              <div
+                className={clsx(
+                  "flex min-h-0 min-w-0 flex-1 gap-3 px-4 py-4",
+                  // Desktop: horizontal kanban scroll. Mobile: vertical stack.
+                  "flex-col overflow-y-auto md:flex-row md:overflow-x-auto md:overflow-y-hidden",
+                )}
+              >
+                {COLUMNS.map((col) => {
+                  const droppable =
+                    !!draggingCard && allowedTargets.includes(col.id);
+                  // A column is "draggable from" iff there's at least one allowed
+                  // target out of it. We use the STATIC table here as a coarse
+                  // signal — the per-card `dropTargetsFor` runs at drag-start, so
+                  // a stuck card with merged_sha will still be picked up but find
+                  // no valid targets and bounce back. (Marking the column as a
+                  // whole non-draggable would block the merged_sha=null cards
+                  // that DO have a valid Ready target.)
+                  const draggable =
+                    col.id === "stuck"
+                      ? true
+                      : (STATIC_ALLOWED_DROPS[col.id]?.length ?? 0) > 0;
+                  return (
+                    <Column
+                      key={col.id}
+                      status={col.id}
+                      label={col.label}
+                      cards={grouped[col.id] ?? []}
+                      droppable={droppable}
+                      draggable={draggable}
+                      isDragging={!!draggingCard}
+                      loading={cardsLoading}
+                    />
+                  );
+                })}
+              </div>
+
+              <DragOverlay dropAnimation={null}>
+                {draggingCard ? (
+                  <div className="w-[260px] rotate-1">
+                    <CardTile card={draggingCard} />
+                  </div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
+          </section>
+        </main>
       </div>
 
       {/* Floating action bar — bulk archive (also shown for single selection
@@ -525,6 +601,238 @@ export function Board() {
       <ComposerModal />
       <Toaster />
     </AppShell>
+  );
+}
+
+function WorkbenchPanel({
+  open,
+  onOpenChange,
+  attentionCards,
+  activeCards,
+  readyCards,
+  totalCards,
+  activeWorkers,
+  concurrencyLimit,
+  queuedCount,
+  doneCount,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  attentionCards: CardSummary[];
+  activeCards: CardSummary[];
+  readyCards: CardSummary[];
+  totalCards: number;
+  activeWorkers: number;
+  concurrencyLimit: number;
+  queuedCount: number;
+  doneCount: number;
+}) {
+  if (!open) {
+    return (
+      <aside className="flex max-h-12 min-h-0 border-b border-border bg-surface/58 md:max-h-none md:border-b-0 md:border-r">
+        <button
+          type="button"
+          onClick={() => onOpenChange(true)}
+          className="flex h-12 w-full items-center justify-between gap-2 px-4 text-left transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] md:h-full md:w-12 md:flex-col md:justify-start md:px-0 md:py-3"
+          aria-expanded={false}
+          aria-label="Expand workbench"
+          title="Expand workbench"
+        >
+          <span className="flex min-w-0 items-center gap-2 md:flex-col">
+            <ChevronDown className="h-4 w-4 -rotate-90 text-ink-muted" />
+            <span className="truncate text-[12px] font-semibold text-ink md:hidden">
+              Workbench
+            </span>
+            <span className="hidden font-mono text-[11px] font-semibold text-ink-muted md:block">
+              WB
+            </span>
+          </span>
+          <span className="flex items-center gap-1.5 md:flex-col">
+            <span
+              className={clsx(
+                "rounded-sm px-1.5 py-0.5 font-mono text-[10px] ring-1 ring-inset",
+                attentionCards.length > 0
+                  ? "bg-amber-50 text-amber-800 ring-amber-200"
+                  : "bg-surface text-ink-subtle ring-border",
+              )}
+              title="Attention cards"
+            >
+              {attentionCards.length}
+            </span>
+            <span
+              className="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-ink-subtle ring-1 ring-inset ring-border"
+              title="Ready cards"
+            >
+              {readyCards.length}
+            </span>
+          </span>
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="flex max-h-[42vh] min-h-0 flex-col border-b border-border bg-surface/58 md:max-h-none md:border-b-0 md:border-r">
+      <div className="shrink-0 border-b border-border px-4 py-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[13px] font-semibold text-ink">Workbench</h2>
+            <p className="text-[11.5px] text-ink-subtle">
+              Operational queue for what needs attention now.
+            </p>
+          </div>
+          <span className="rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px] text-ink-muted">
+            {totalCards} cards
+          </span>
+          <IconButton
+            label="Collapse workbench"
+            size="xs"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+          >
+            <ChevronDown className="h-4 w-4 rotate-90" />
+          </IconButton>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <WorkbenchMetric label="workers" value={`${activeWorkers}/${concurrencyLimit}`} hot={activeWorkers > 0} />
+          <WorkbenchMetric label="queued" value={queuedCount} hot={queuedCount > 0} />
+          <WorkbenchMetric label="attention" value={attentionCards.length} hot={attentionCards.length > 0} tone="amber" />
+          <WorkbenchMetric label="done" value={doneCount} tone="green" />
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <QueueSection
+          title="Needs attention"
+          cards={attentionCards}
+          empty="No stuck, review, or merge cards."
+        />
+        <QueueSection
+          title="Running now"
+          cards={activeCards.slice(0, 6)}
+          empty="No worker is active."
+        />
+        <QueueSection
+          title="Ready queue"
+          cards={readyCards.slice(0, 6)}
+          empty="No cards waiting for a worker."
+        />
+      </div>
+    </aside>
+  );
+}
+
+function WorkbenchMetric({
+  label,
+  value,
+  hot = false,
+  tone = "cyan",
+}: {
+  label: string;
+  value: number | string;
+  hot?: boolean;
+  tone?: "cyan" | "amber" | "green";
+}) {
+  const toneClass =
+    tone === "amber"
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : tone === "green"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+        : "border-accent bg-accent-soft text-accent-strong";
+  return (
+    <div
+      className={clsx(
+        "rounded-md border px-2 py-1.5",
+        hot ? toneClass : "border-border bg-surface text-ink-muted",
+      )}
+    >
+      <div className="text-[10.5px] font-medium uppercase">{label}</div>
+      <div className="font-mono text-[13px] font-semibold text-ink">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function QueueSection({
+  title,
+  cards,
+  empty,
+}: {
+  title: string;
+  cards: CardSummary[];
+  empty: string;
+}) {
+  return (
+    <section className="mb-4 last:mb-0">
+      <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold uppercase text-ink-subtle">
+        <span>{title}</span>
+        <span className="font-mono">{cards.length}</span>
+      </div>
+      {cards.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border-strong bg-surface/70 px-3 py-2 text-[11.5px] text-ink-subtle">
+          {empty}
+        </div>
+      ) : (
+        <ol className="space-y-1.5">
+          {cards.map((card) => (
+            <QueueRow key={`${title}-${card.id}`} card={card} />
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function QueueRow({ card }: { card: CardSummary }) {
+  const openDrawer = useBoard((s) => s.openDrawer);
+  const statusLabel = STATUS_LABEL.get(card.status) ?? card.status;
+  const tone =
+    card.status === "stuck"
+      ? "amber"
+      : card.status === "human_review" || card.status === "ai_review"
+        ? "amber"
+        : card.status === "done"
+          ? "green"
+          : "blue";
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => openDrawer(card.id)}
+        className="group flex w-full items-start gap-2 rounded-md border border-border bg-surface px-2.5 py-2 text-left shadow-tile transition-shadow hover:shadow-tileHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]"
+      >
+        <StatusDot tone={tone} className="mt-1.5" />
+        <div className="min-w-0 flex-1">
+          <div className="mb-0.5 flex items-center gap-1.5">
+            <span className="font-mono text-[10.5px] text-ink-subtle">
+              {card.id}
+            </span>
+            <span className="rounded-sm border border-border bg-surface-muted px-1 py-px font-mono text-[10px] text-ink-muted">
+              P{card.priority}
+            </span>
+            {card.owner_pid ? (
+              <span className="font-mono text-[10px] text-accent-strong">
+                pid {card.owner_pid}
+              </span>
+            ) : null}
+          </div>
+          <div className="line-clamp-2 text-[12.5px] font-medium leading-snug text-ink">
+            {card.title}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-ink-subtle">
+            <CircleDot className="h-3 w-3" />
+            <span>{statusLabel}</span>
+            {card.scope ? (
+              <>
+                <span aria-hidden>·</span>
+                <span className="truncate">{card.scope}</span>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </button>
+    </li>
   );
 }
 
@@ -633,7 +941,7 @@ function AutoReviewToggle() {
       size="sm"
       variant={checked ? "secondary" : "soft"}
       className={clsx(
-        checked && "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-50",
+        checked && "border-accent bg-accent-soft text-accent-strong hover:bg-accent-soft",
       )}
       role="switch"
       aria-checked={checked}
@@ -642,7 +950,7 @@ function AutoReviewToggle() {
       <span
         className={clsx(
           "inline-block h-1.5 w-1.5 rounded-full",
-          checked ? "bg-emerald-500" : "bg-gray-300",
+          checked ? "bg-accent" : "bg-slate-300",
         )}
       />
       Auto-review {checked ? "on" : "off"}

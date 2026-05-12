@@ -86,9 +86,9 @@ const ROLE_STYLE: Record<
   CardStage["role"],
   { dot: string; label: string; text: string }
 > = {
-  worker: { dot: "bg-emerald-500", label: "worker", text: "text-emerald-700" },
+  worker: { dot: "bg-accent", label: "worker", text: "text-accent-strong" },
   reviewer: { dot: "bg-amber-500", label: "reviewer", text: "text-amber-700" },
-  merger: { dot: "bg-blue-500", label: "merger", text: "text-blue-700" },
+  merger: { dot: "bg-slate-500", label: "merger", text: "text-slate-700" },
 };
 
 /**
@@ -270,7 +270,7 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
                 className={clsx(
                   "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono transition-colors",
                   active
-                    ? "border-ink bg-ink text-white"
+                    ? "border-accent bg-accent-soft text-accent-strong"
                     : "border-border-strong bg-surface text-ink-muted hover:bg-surface-muted",
                 )}
                 title={`Started ${s.started_at}`}
@@ -291,8 +291,8 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
         </div>
         <div className="shrink-0">
           {isStreaming ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
-              <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-emerald-500" />
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] font-medium text-accent-strong ring-1 ring-inset ring-accent">
+              <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-accent" />
               LIVE
             </span>
           ) : selected ? (

@@ -220,7 +220,7 @@ export function Markdown({
                 <input
                   {...props}
                   disabled
-                  className="mr-1.5 translate-y-[1px] accent-emerald-600"
+                  className="mr-1.5 translate-y-[1px] accent-[var(--accent)]"
                 />
               );
             }

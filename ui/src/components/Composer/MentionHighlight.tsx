@@ -147,7 +147,7 @@ export const MentionHighlightOverlay = forwardRef<HTMLDivElement, Props>(
             t.type === "mention" ? (
               <span
                 key={idx}
-                className="rounded-sm bg-blue-100 text-blue-900"
+                className="rounded-sm bg-accent-soft text-accent-strong"
               >
                 {t.text}
               </span>

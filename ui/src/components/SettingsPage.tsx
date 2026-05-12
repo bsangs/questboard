@@ -78,7 +78,7 @@ export function SettingsPage({ section }: { section: SettingsSectionId }) {
         <RailLink href="/" label="Back to board">
           <ArrowLeft className="h-4 w-4" />
         </RailLink>
-        <div className="mt-2 inline-flex h-9 w-9 items-center justify-center rounded-md bg-ink text-white">
+        <div className="mt-2 inline-flex h-9 w-9 items-center justify-center rounded-md border border-accent bg-accent-soft text-accent-strong">
           <Settings2 className="h-4 w-4" />
         </div>
       </AppRail>

@@ -18,7 +18,7 @@ export function Panel({
         "rounded-md border border-border bg-surface text-ink shadow-tile",
         interactive &&
           "transition-shadow hover:border-border-strong hover:shadow-tileHover",
-        selected && "border-emerald-300 bg-surface-selected ring-1 ring-emerald-300",
+        selected && "border-accent bg-surface-selected ring-1 ring-accent",
         className,
       )}
       {...props}

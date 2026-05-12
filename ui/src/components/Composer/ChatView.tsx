@@ -50,7 +50,7 @@ const STATUS_STYLE: Record<
   { dot: string; label: string; text: string }
 > = {
   idle: { dot: "bg-gray-400", label: "idle", text: "text-ink-muted" },
-  running: { dot: "bg-emerald-500 animate-pulseDot", label: "running", text: "text-emerald-700" },
+  running: { dot: "bg-accent animate-pulseDot", label: "running", text: "text-accent-strong" },
   awaiting: { dot: "bg-amber-500 animate-pulseDot", label: "awaiting", text: "text-amber-700" },
   error: { dot: "bg-red-500", label: "error", text: "text-red-700" },
 };
@@ -328,7 +328,7 @@ export function ComposerChatView({ threadId }: Props) {
               type="button"
               onClick={onMakeCards}
               disabled={status === "awaiting"}
-              className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11.5px] font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded border border-accent bg-accent-soft px-2 py-1 text-[11.5px] font-medium text-accent-strong hover:bg-accent-soft disabled:opacity-50"
               title="Ask the AI to drop the agreed plan as cards"
             >
               <MessageSquarePlus className="h-3.5 w-3.5" /> Make cards

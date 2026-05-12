@@ -9,7 +9,7 @@ export type StatusDotTone =
 
 const toneClass: Record<StatusDotTone, string> = {
   neutral: "bg-slate-300",
-  blue: "bg-blue-500",
+  blue: "bg-cyan-500",
   green: "bg-emerald-500",
   amber: "bg-amber-500",
   red: "bg-red-500",

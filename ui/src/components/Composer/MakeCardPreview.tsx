@@ -20,7 +20,7 @@ import { useMemo, useState } from "react";
 import { decideComposerTool } from "@/lib/composer";
 import { useBoard } from "@/lib/state";
 import type { CardFlavor, ComposerPendingToolUse } from "@/lib/types";
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 
 const FLAVORS: CardFlavor[] = ["feature", "bug", "refactor", "chore", "docs"];
 
@@ -148,12 +148,12 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-[13px] shadow-sm">
+    <div className="rounded-lg border border-accent bg-accent-soft p-3 text-[13px] shadow-sm">
       <div className="mb-2 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold uppercase text-emerald-800">
+        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold uppercase text-accent-strong">
           <Pencil className="h-3.5 w-3.5" /> make_card · awaiting approval
         </span>
-        <span className="font-mono text-[10.5px] text-emerald-700/70">
+        <span className="font-mono text-[10.5px] text-accent-strong">
           {pending.id.slice(0, 8)}
         </span>
       </div>
@@ -265,7 +265,7 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
               className={clsx(
                 edited
                   ? "bg-amber-600 hover:bg-amber-700"
-                  : "bg-emerald-600 hover:bg-emerald-700",
+                  : "bg-accent hover:bg-accent-strong",
               )}
               icon={<Check className="h-3.5 w-3.5" />}
             >
@@ -300,25 +300,5 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
         )}
       </div>
     </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="mt-2 block first:mt-0">
-      <div className="mb-0.5 flex items-center justify-between text-[10.5px] font-medium uppercase text-ink-subtle">
-        <span>{label}</span>
-        {hint && <span className="text-[10px] normal-case">{hint}</span>}
-      </div>
-      {children}
-    </label>
   );
 }

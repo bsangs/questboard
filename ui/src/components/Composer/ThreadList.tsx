@@ -295,7 +295,7 @@ export function ComposerThreadList({ query, onSelected }: Props) {
           className={clsx(
             "flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5 text-[11px]",
             selectionMode
-              ? "border-emerald-100 bg-emerald-50/80"
+              ? "border-accent bg-accent-soft"
               : "border-border bg-surface/60",
           )}
         >
@@ -361,10 +361,10 @@ export function ComposerThreadList({ query, onSelected }: Props) {
 
 const STATUS_DOT: Record<
   ComposerProcessStatus,
-  { tone: "neutral" | "green" | "amber" | "red"; pulse?: boolean }
+  { tone: "neutral" | "blue" | "amber" | "red"; pulse?: boolean }
 > = {
   idle: { tone: "neutral" },
-  running: { tone: "green", pulse: true },
+  running: { tone: "blue", pulse: true },
   awaiting: { tone: "amber" },
   error: { tone: "red" },
 };
@@ -426,11 +426,11 @@ function ThreadRow({
       className={clsx(
         "group relative cursor-pointer rounded-lg px-2 py-2 text-[12.5px] transition",
         selected
-          ? "bg-emerald-50 shadow-sm ring-1 ring-emerald-300"
+          ? "bg-accent-soft shadow-sm ring-1 ring-accent"
           : active
             ? "bg-ink/5"
             : "hover:bg-surface-muted",
-        selectionMode && !selected && "hover:bg-emerald-50/60",
+        selectionMode && !selected && "hover:bg-accent-soft",
       )}
       onClick={onSelect}
     >
@@ -467,8 +467,8 @@ function ThreadRow({
             className={clsx(
               "ml-1 h-5 w-5 rounded-full",
               selected
-                ? "border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600"
-                : "border-border bg-surface text-transparent group-hover:border-emerald-300",
+                ? "border-accent bg-accent text-white hover:bg-accent-strong"
+                : "border-border bg-surface text-transparent group-hover:border-accent",
             )}
           >
             <Check className="h-3.5 w-3.5" />

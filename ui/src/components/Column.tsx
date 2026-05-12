@@ -157,10 +157,10 @@ export function Column({
         >
           {showDoneHint && (
             <div
-              className="rounded-md border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-emerald-800"
+              className="rounded-md border border-accent bg-accent-soft px-2.5 py-1.5 text-[11.5px] leading-snug text-accent-strong"
               role="note"
             >
-              <kbd className="rounded border border-emerald-200 bg-surface px-1 py-px font-mono text-[10.5px] text-emerald-900">
+              <kbd className="rounded border border-accent bg-surface px-1 py-px font-mono text-[10.5px] text-accent-strong">
                 {modKey}
               </kbd>
               -click to multi-select for archive

@@ -451,7 +451,7 @@ function MentionRow({
       }}
       className={clsx(
         "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px]",
-        active ? "bg-blue-50 text-ink" : "text-ink hover:bg-gray-50",
+        active ? "bg-accent-soft text-ink" : "text-ink hover:bg-surface-muted",
       )}
     >
       {item.kind === "card" ? (

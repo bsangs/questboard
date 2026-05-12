@@ -135,11 +135,11 @@ export function CardTile({ card, draggable = false }: Props) {
   const statusBadge: { label: string; color: string; ring: string } | null =
     isMerging
       ? { label: "merging", color: "text-slate-700", ring: "bg-slate-500" }
-      : isAiReviewing
-      ? { label: "reviewing", color: "text-emerald-700", ring: "bg-emerald-500" }
-      : isInProgress
-      ? { label: "in progress", color: "text-emerald-700", ring: "bg-emerald-500" }
-      : null;
+    : isAiReviewing
+      ? { label: "reviewing", color: "text-accent-strong", ring: "bg-accent" }
+    : isInProgress
+      ? { label: "in progress", color: "text-accent-strong", ring: "bg-accent" }
+    : null;
 
   // Live elapsed: tick once per second between server heartbeats so the
   // user sees the clock move. Anchor each new heartbeat reading to "now"
@@ -243,7 +243,7 @@ export function CardTile({ card, draggable = false }: Props) {
       {statusBadge && (
         <div className="mt-2 flex items-center gap-1.5 text-[11.5px] leading-none">
           <StatusDot
-            tone={isMerging ? "neutral" : "green"}
+            tone={isMerging ? "neutral" : "blue"}
             pulse
             className={statusBadge.ring}
           />
@@ -330,7 +330,7 @@ function RoleTokenChips({
     <div className="mt-2 flex flex-wrap items-center gap-1 text-[10.5px] font-mono">
       {showWorker && (
         <span
-          className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 ring-1 ring-inset ring-emerald-200"
+          className="rounded bg-accent-soft px-1.5 py-0.5 text-accent-strong ring-1 ring-inset ring-accent"
           title={`Worker — in ${wi.toLocaleString()} · out ${wo.toLocaleString()}`}
         >
           W ↓{fmtTokensCompact(wi)} ↑{fmtTokensCompact(wo)}

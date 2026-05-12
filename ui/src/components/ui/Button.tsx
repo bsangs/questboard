@@ -8,9 +8,9 @@ type ButtonSize = "xs" | "sm" | "md";
 
 const variantClass: Record<ButtonVariant, string> = {
   primary:
-    "border-transparent bg-ink text-white shadow-sm hover:bg-slate-900 disabled:bg-ink/50",
+    "border-transparent bg-ink text-white shadow-sm hover:bg-slate-800 disabled:bg-ink/50",
   secondary:
-    "border-border-strong bg-surface text-ink shadow-sm hover:bg-surface-muted",
+    "border-border-strong bg-surface-raised text-ink shadow-sm hover:bg-surface-muted",
   ghost:
     "border-transparent bg-transparent text-ink-muted hover:bg-surface-muted hover:text-ink",
   danger:
@@ -49,7 +49,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       className={clsx(
         "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border font-medium",
-        "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]",
+        "transition-colors active:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]",
         "disabled:cursor-not-allowed disabled:opacity-60",
         variantClass[variant],
         sizeClass[size],
@@ -91,7 +91,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
       title={props.title ?? label}
       className={clsx(
         "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]",
+        "active:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]",
         "disabled:cursor-not-allowed disabled:opacity-60",
         variantClass[variant],
         box,

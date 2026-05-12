@@ -167,9 +167,9 @@ const CLASS_LABEL: Record<PostBuildAttempt["classification"], string> = {
 };
 
 const STAGE_TONE: Record<CardStage["role"], string> = {
-  worker: "text-emerald-700",
+  worker: "text-accent-strong",
   reviewer: "text-amber-700",
-  merger: "text-blue-700",
+  merger: "text-slate-700",
 };
 
 function StageRow({ stage }: { stage: CardStage }) {
@@ -204,7 +204,7 @@ function PostBuildRow({
     <div className="grid grid-cols-[80px_1fr_auto] items-baseline gap-2 font-mono text-[12px]">
       <span className="text-ink-subtle">{fmtClock(attempt.ts)}</span>
       <span>
-        <span className="font-semibold text-blue-700">post-build #{index}</span>
+        <span className="font-semibold text-accent-strong">post-build #{index}</span>
         <span className="ml-2 text-ink-muted">
           {fmtDuration(attempt.duration_ms)}
         </span>
