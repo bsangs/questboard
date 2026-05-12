@@ -16,12 +16,12 @@ export function Toaster() {
         <div
           key={t.id}
           className={clsx(
-            "pointer-events-auto flex max-w-md items-start gap-3 rounded-md border px-3 py-2 text-[12.5px] shadow-lg animate-fadeIn",
+            "pointer-events-auto flex max-w-md items-start gap-3 rounded-md border px-3 py-2 text-[12.5px] shadow-popover animate-fadeIn",
             t.kind === "error" &&
               "border-red-200 bg-red-50 text-red-800",
             t.kind === "success" &&
               "border-emerald-200 bg-emerald-50 text-emerald-900",
-            t.kind === "info" && "border-black/10 bg-white text-ink",
+            t.kind === "info" && "border-border bg-surface text-ink",
           )}
           role="status"
         >
@@ -29,7 +29,7 @@ export function Toaster() {
           <button
             aria-label="Dismiss"
             onClick={() => dismiss(t.id)}
-            className="-mr-1 rounded p-0.5 text-ink-subtle hover:bg-black/5"
+            className="-mr-1 rounded p-0.5 text-ink-subtle hover:bg-surface-muted"
           >
             <X className="h-3.5 w-3.5" />
           </button>

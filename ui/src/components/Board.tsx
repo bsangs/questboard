@@ -10,7 +10,12 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import clsx from "clsx";
-import { Archive, ChevronDown, MessageSquarePlus } from "lucide-react";
+import {
+  Archive,
+  ChevronDown,
+  MessageSquarePlus,
+  Settings2,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   archiveCards,
@@ -26,16 +31,24 @@ import {
 } from "@/lib/api";
 import { useSse } from "@/lib/sse";
 import { COLUMNS, useBoard } from "@/lib/state";
-import type { CardStatus, CardSummary } from "@/lib/types";
+import type { BoardConfig, CardStatus, CardSummary } from "@/lib/types";
 import { CardDrawer } from "./CardDrawer";
 import { CardTile } from "./CardTile";
 import { Column } from "./Column";
 import { ComposerModal } from "./Composer/Modal";
 import { CwdPicker } from "./Composer/CwdPicker";
 import { NewCardModal } from "./NewCardModal";
-import { SettingsDrawer } from "./SettingsDrawer";
+import {
+  AppHeader,
+  AppRail,
+  AppShell,
+  MetricPill,
+  RailLink,
+  SelectionBar,
+} from "./patterns";
 import { StatsPanel } from "./StatsPanel";
 import { Toaster } from "./Toaster";
+import { Button, IconButton } from "./ui";
 
 /**
  * Static allowed drag-and-drop transitions for non-stuck cards. Stuck cards
@@ -62,15 +75,73 @@ const STATIC_ALLOWED_DROPS: Record<CardStatus, CardStatus[]> = {
   cancelled: [],
 };
 
+const DEFAULT_CONFIG_FALLBACK: BoardConfig = {
+  version: 2,
+  auto_review: false,
+  concurrency_limit: 8,
+  telegram_enabled: false,
+  dispatch_paused: false,
+  default_language: "en",
+  scopes: [],
+  default_scope: null,
+  composer_concurrency: 3,
+  git: {
+    base_branch: "main",
+    worker_branch_template: "worker/card-{card_id}",
+    worktree_template: "card-{card_id}",
+    composer_worktree_template: "composer-{thread_id}",
+  },
+  commands: {
+    merge: [
+      {
+        id: "checkout-base",
+        label: "Checkout base",
+        command: "git checkout {base_branch}",
+        required: true,
+      },
+      {
+        id: "fast-forward",
+        label: "Fast-forward merge",
+        command: "git merge --ff-only {wip_branch}",
+        required: true,
+      },
+      {
+        id: "delete-local-branch",
+        label: "Delete local branch",
+        command:
+          "git worktree remove --force \"{worktree_path}\" 2>/dev/null || true; git branch -d {wip_branch}",
+        required: false,
+      },
+    ],
+    stages: {
+      in_progress: { pre: null, post: null },
+      ai_review: { pre: null, post: null },
+      merging: { pre: null, post: null },
+      stuck: { pre: null, post: null },
+    },
+  },
+  roles: {
+    worker: { prompt_append: "" },
+    reviewer: { prompt_append: "" },
+    merger: { prompt_append: "" },
+  },
+  environment: { env: [], secret_env: [] },
+  auth: { bare_enabled: false },
+  notifications: { events: [] },
+  files: {
+    hidden_names: ["node_modules", ".git", ".next", "dist", "build", "out"],
+  },
+};
+
 /**
  * Resolve the set of valid drop targets for a card. Stuck cards branch on
  * `merged_sha`:
  *   - merged_sha == null  → ["ready"]   (re-queue for fresh worker)
- *   - merged_sha != null  → []          (no DnD targets; drawer handles
- *     retry-post-build and force-done with explicit affordances)
+ *   - merged_sha != null  → []          (no DnD targets; drawer exposes
+ *     force-done explicitly)
  *
- * The drawer offers retry-post-build and force-done as buttons on
- * stuck-with-merged_sha cards; we keep them OFF the DnD surface to avoid
+ * The drawer offers force-done on stuck-with-merged_sha cards; we keep it
+ * OFF the DnD surface to avoid
  * accidental destructive moves (drag-to-Done losing audit context, etc.).
  */
 export function dropTargetsFor(card: CardSummary): CardStatus[] {
@@ -297,11 +368,11 @@ export function Board() {
   const queuedCount = useBoard((s) => s.stats?.queued_cards ?? 0);
 
   return (
-    <div className="flex h-screen flex-col bg-white">
+    <AppShell>
       {/* Top bar — condenses on mobile: title + a couple essentials,
           dense pill row hidden under md */}
-      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-black/5 bg-white px-4 py-2.5 md:gap-4 md:px-5">
-        <h1 className="flex items-center gap-2 text-[14.5px] font-semibold tracking-tight">
+      <AppHeader>
+        <h1 className="flex items-center gap-2 text-[14.5px] font-semibold">
           <span
             aria-hidden
             className="inline-block h-2 w-2 rounded-full bg-emerald-500"
@@ -311,19 +382,12 @@ export function Board() {
         </h1>
 
         <div className="hidden items-center gap-3 text-[12px] text-ink-muted md:flex">
-          <span
-            className={clsx(
-              "rounded px-1.5 py-0.5 font-mono",
-              activeWorkers >= concurrencyLimit
-                ? "bg-red-50 text-red-700"
-                : "bg-gray-100",
-            )}
-          >
-            {activeWorkers}/{concurrencyLimit} workers
-          </span>
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono">
-            {queuedCount} queued
-          </span>
+          <MetricPill
+            label="workers"
+            value={`${activeWorkers}/${concurrencyLimit}`}
+            tone={activeWorkers >= concurrencyLimit ? "red" : "neutral"}
+          />
+          <MetricPill label="queued" value={queuedCount} />
           <StatsPanel />
         </div>
 
@@ -332,94 +396,90 @@ export function Board() {
           <AutoReviewToggle />
           <ComposerTrigger />
           <NewCardModal />
-          <SettingsDrawer />
         </div>
-      </header>
+      </AppHeader>
 
       {/* Paused banner — sits above the columns when the dispatcher is
           parked. Amber so it reads as a temporary, intentional state. */}
       {config?.dispatch_paused ? <DispatchPausedBanner /> : null}
 
-      {/* Board */}
-      <DndContext
-        sensors={sensors}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        onDragCancel={() => setActiveDragId(null)}
-      >
-        <div
-          className={clsx(
-            "flex flex-1 gap-3 px-4 py-4",
-            // Desktop: horizontal kanban scroll (unchanged).
-            // Mobile: vertical stack of full-width sections that scroll the page.
-            "flex-col overflow-y-auto md:flex-row md:overflow-x-auto md:overflow-y-hidden",
-          )}
-        >
-          {COLUMNS.map((col) => {
-            const droppable =
-              !!draggingCard && allowedTargets.includes(col.id);
-            // A column is "draggable from" iff there's at least one allowed
-            // target out of it. We use the STATIC table here as a coarse
-            // signal — the per-card `dropTargetsFor` runs at drag-start, so
-            // a stuck card with merged_sha will still be picked up but find
-            // no valid targets and bounce back. (Marking the column as a
-            // whole non-draggable would block the merged_sha=null cards
-            // that DO have a valid Ready target.)
-            const draggable =
-              col.id === "stuck"
-                ? true
-                : (STATIC_ALLOWED_DROPS[col.id]?.length ?? 0) > 0;
-            return (
-              <Column
-                key={col.id}
-                status={col.id}
-                label={col.label}
-                cards={grouped[col.id] ?? []}
-                droppable={droppable}
-                draggable={draggable}
-                isDragging={!!draggingCard}
-              />
-            );
-          })}
-        </div>
+      <div className="flex min-h-0 flex-1">
+        <AppSidebar />
 
-        <DragOverlay dropAnimation={null}>
-          {draggingCard ? (
-            <div className="w-[260px] rotate-1">
-              <CardTile card={draggingCard} />
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+        {/* Board */}
+        <DndContext
+          sensors={sensors}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragCancel={() => setActiveDragId(null)}
+        >
+          <div
+            className={clsx(
+              "flex min-w-0 flex-1 gap-3 bg-bg px-4 py-4",
+              // Desktop: horizontal kanban scroll (unchanged).
+              // Mobile: vertical stack of full-width sections that scroll the page.
+              "flex-col overflow-y-auto md:flex-row md:overflow-x-auto md:overflow-y-hidden",
+            )}
+          >
+            {COLUMNS.map((col) => {
+              const droppable =
+                !!draggingCard && allowedTargets.includes(col.id);
+              // A column is "draggable from" iff there's at least one allowed
+              // target out of it. We use the STATIC table here as a coarse
+              // signal — the per-card `dropTargetsFor` runs at drag-start, so
+              // a stuck card with merged_sha will still be picked up but find
+              // no valid targets and bounce back. (Marking the column as a
+              // whole non-draggable would block the merged_sha=null cards
+              // that DO have a valid Ready target.)
+              const draggable =
+                col.id === "stuck"
+                  ? true
+                  : (STATIC_ALLOWED_DROPS[col.id]?.length ?? 0) > 0;
+              return (
+                <Column
+                  key={col.id}
+                  status={col.id}
+                  label={col.label}
+                  cards={grouped[col.id] ?? []}
+                  droppable={droppable}
+                  draggable={draggable}
+                  isDragging={!!draggingCard}
+                />
+              );
+            })}
+          </div>
+
+          <DragOverlay dropAnimation={null}>
+            {draggingCard ? (
+              <div className="w-[260px] rotate-1">
+                <CardTile card={draggingCard} />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      </div>
 
       {/* Floating action bar — bulk archive (also shown for single selection
           since this is the primary archive UI for power users) */}
       {selected.size >= 1 && (
         <div className="fixed bottom-5 left-1/2 z-30 -translate-x-1/2 animate-fadeIn">
-          <div className="flex items-center gap-3 rounded-full border border-black/10 bg-white px-4 py-2 shadow-lg">
-            <span className="text-[12.5px]">
-              <span className="font-mono">{selected.size}</span> selected
-            </span>
-            <button
+          <SelectionBar count={selected.size} onClear={clearSelection}>
+            <Button
               onClick={onArchiveSelected}
-              className="inline-flex items-center gap-1 rounded-full bg-ink px-3 py-1 text-[12px] font-medium text-white hover:bg-black"
+              variant="primary"
+              size="xs"
+              icon={<Archive className="h-3.5 w-3.5" />}
             >
-              <Archive className="h-3.5 w-3.5" /> Archive
-            </button>
-            <button
-              onClick={clearSelection}
-              className="rounded-full px-2 py-1 text-[12px] text-ink-muted hover:bg-black/5"
-            >
-              Clear
-            </button>
-          </div>
+              Archive
+            </Button>
+          </SelectionBar>
         </div>
       )}
 
       <CardDrawer />
       <ComposerModal />
       <Toaster />
-    </div>
+    </AppShell>
   );
 }
 
@@ -448,22 +508,27 @@ function ComposerTrigger() {
 
   return (
     <div ref={wrapRef} className="relative inline-flex">
-      <div className="inline-flex overflow-hidden rounded-md border border-black/10 bg-white shadow-sm">
-        <button
+      <div className="inline-flex overflow-hidden rounded-md border border-border-strong bg-surface shadow-sm">
+        <Button
           onClick={() => setComposerOpen(true)}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12.5px] font-medium text-ink hover:bg-black/5"
+          variant="ghost"
+          size="sm"
+          className="rounded-none border-0"
           title="Open Composer"
+          icon={<MessageSquarePlus className="h-3.5 w-3.5" />}
         >
-          <MessageSquarePlus className="h-3.5 w-3.5" /> Composer
-        </button>
-        <button
+          Composer
+        </Button>
+        <IconButton
           onClick={() => setPickerOpen((v) => !v)}
-          aria-label="Composer options"
-          className="border-l border-black/10 px-1.5 text-ink-muted hover:bg-black/5"
+          label="Composer options"
+          variant="ghost"
+          size="sm"
+          className="rounded-none border-0 border-l border-border"
           title="New thread with working directory…"
         >
           <ChevronDown className="h-3.5 w-3.5" />
-        </button>
+        </IconButton>
       </div>
       {pickerOpen && (
         <div className="absolute right-0 top-[110%] z-30">
@@ -471,6 +536,16 @@ function ComposerTrigger() {
         </div>
       )}
     </div>
+  );
+}
+
+function AppSidebar() {
+  return (
+    <AppRail>
+      <RailLink href="/settings/general" label="Open settings">
+        <Settings2 className="h-4 w-4" />
+      </RailLink>
+    </AppRail>
   );
 }
 
@@ -487,18 +562,7 @@ function AutoReviewToggle() {
     try {
       const { auto_review, swept_count } = await toggleAutoReview();
       setConfig({
-        ...(config ?? {
-          concurrency_limit: 8,
-          telegram_enabled: false,
-          default_language: "en",
-          auto_review: false,
-          dispatch_paused: false,
-          scopes: [],
-          default_scope: null,
-          merger_post_build_command: null,
-          merger_post_build_cwd: null,
-          composer_concurrency: 3,
-        }),
+        ...(config ?? DEFAULT_CONFIG_FALLBACK),
         auto_review,
       });
       if (swept_count > 0) {
@@ -518,14 +582,13 @@ function AutoReviewToggle() {
   };
 
   return (
-    <button
+    <Button
       onClick={flip}
       disabled={busy}
+      size="sm"
+      variant={checked ? "secondary" : "soft"}
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] font-medium transition-colors",
-        checked
-          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-          : "border-black/10 text-ink-muted hover:bg-black/5",
+        checked && "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-50",
       )}
       role="switch"
       aria-checked={checked}
@@ -538,7 +601,7 @@ function AutoReviewToggle() {
         )}
       />
       Auto-review {checked ? "on" : "off"}
-    </button>
+    </Button>
   );
 }
 
@@ -578,14 +641,13 @@ function DispatchPauseToggle() {
   };
 
   return (
-    <button
+    <Button
       onClick={flip}
       disabled={busy}
+      size="sm"
+      variant={paused ? "secondary" : "soft"}
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] font-medium transition-colors",
-        paused
-          ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-          : "border-black/10 text-ink-muted hover:bg-black/5",
+        paused && "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100",
       )}
       role="switch"
       aria-checked={paused}
@@ -599,7 +661,7 @@ function DispatchPauseToggle() {
         {paused ? "▶" : "⏸"}
       </span>
       {paused ? "Resume line" : "Pause line"}
-    </button>
+    </Button>
   );
 }
 

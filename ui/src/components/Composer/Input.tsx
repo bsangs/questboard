@@ -438,10 +438,10 @@ export function ComposerInput({ threadId }: Props) {
 
       <div
         className={clsx(
-          "flex items-end gap-2 rounded-md border bg-white px-2.5 py-2 transition-colors",
+          "flex items-end gap-2 rounded-md border bg-surface px-2.5 py-2 transition-colors",
           sendDisabled
             ? "border-amber-200 bg-amber-50/40"
-            : "border-black/10 focus-within:border-ink",
+            : "border-border-strong focus-within:border-ink",
         )}
       >
         {/*
@@ -493,7 +493,7 @@ export function ComposerInput({ threadId }: Props) {
             type="button"
             onClick={() => pickFile()}
             disabled={sendDisabled}
-            className="rounded p-1 text-ink-subtle hover:bg-black/5 disabled:opacity-40"
+            className="rounded p-1 text-ink-subtle hover:bg-surface-muted disabled:opacity-40"
             title="Attach image (paste / drop also supported)"
           >
             <ImagePlus className="h-4 w-4" />
@@ -513,7 +513,7 @@ export function ComposerInput({ threadId }: Props) {
               type="button"
               onClick={onSend}
               disabled={sendDisabled || busy || !value.trim()}
-              className="inline-flex items-center gap-1 rounded bg-ink px-2.5 py-1 text-[12px] font-medium text-white hover:bg-black disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded bg-ink px-2.5 py-1 text-[12px] font-medium text-white hover:bg-slate-900 disabled:opacity-50"
               title={sendDisabled ? "Resolve pending decision first" : "Send (↵)"}
             >
               <Send className="h-3.5 w-3.5" /> Send

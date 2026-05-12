@@ -6,7 +6,6 @@ const nextConfig = {
   // 로컬 단일 사용자라 standalone 의 노드모듈 최소화 이점도 없으니 제거.
   reactStrictMode: true,
   transpilePackages: ["@questboard/core"],
-  eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
     return [

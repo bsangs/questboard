@@ -14,6 +14,7 @@ import { useMemo, useState } from "react";
 import { decideComposerTool } from "@/lib/composer";
 import { useBoard } from "@/lib/state";
 import type { ComposerPendingToolUse } from "@/lib/types";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 
 interface Proposed {
   slug: string;
@@ -121,35 +122,35 @@ export function ComposerSavePlanPreview({ pending, threadId }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3 text-[13px] shadow-sm">
+    <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 text-[13px] shadow-sm">
       <div className="mb-2 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-violet-800">
+        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold uppercase text-amber-800">
           <FileText className="h-3.5 w-3.5" /> save_plan · awaiting approval
         </span>
-        <span className="font-mono text-[10.5px] text-violet-700/70">
+        <span className="font-mono text-[10.5px] text-amber-700/70">
           docs/plan/&lt;ts&gt;-{slug || "<slug>"}.md
         </span>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="Title">
-          <input
+          <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="w-full rounded border border-black/10 bg-white px-2 py-1 text-[13px] focus:border-ink focus:outline-none"
+            className="text-[13px]"
           />
         </Field>
         <Field
           label="Slug"
           hint={!slugValid ? "lowercase a-z / 0-9 / dashes" : undefined}
         >
-          <input
+          <Input
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
             className={clsx(
-              "w-full rounded border bg-white px-2 py-1 font-mono text-[12.5px] focus:outline-none",
+              "font-mono text-[12.5px]",
               slugValid
-                ? "border-black/10 focus:border-ink"
+                ? "border-border-strong focus:border-ink"
                 : "border-red-300 focus:border-red-500",
             )}
           />
@@ -157,20 +158,20 @@ export function ComposerSavePlanPreview({ pending, threadId }: Props) {
       </div>
 
       <Field label="Body (markdown)">
-        <textarea
+        <Textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
           rows={20}
-          className="w-full resize-y rounded border border-black/10 bg-white p-2 font-mono text-[12px] leading-relaxed focus:border-ink focus:outline-none"
+          className="resize-y p-2 font-mono text-[12px] leading-relaxed"
           spellCheck={false}
         />
       </Field>
 
       <Field label="Scope">
-        <select
+        <Select
           value={scope ?? ""}
           onChange={(e) => setScope(e.target.value || null)}
-          className="w-full rounded border border-black/10 bg-white px-2 py-1 text-[12.5px] focus:border-ink focus:outline-none"
+          className="text-[12.5px]"
         >
           <option value="">(none)</option>
           {scopes.map((s) => (
@@ -178,20 +179,20 @@ export function ComposerSavePlanPreview({ pending, threadId }: Props) {
               {s.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       {rejecting && (
         <div className="mt-2 rounded border border-red-200 bg-red-50/60 p-2">
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-red-800">
+          <div className="mb-1 text-[11px] font-medium uppercase text-red-800">
             Rejection reason (optional)
           </div>
-          <textarea
+          <Textarea
             value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)}
             rows={2}
             placeholder="e.g. shorter; drop the migration section"
-            className="w-full resize-none rounded border border-red-200 bg-white p-1.5 text-[12.5px] focus:border-red-500 focus:outline-none"
+            className="resize-none border-red-200 p-1.5 text-[12.5px] focus:border-red-500"
           />
         </div>
       )}
@@ -199,50 +200,53 @@ export function ComposerSavePlanPreview({ pending, threadId }: Props) {
       <div className="mt-3 flex items-center justify-end gap-2">
         {!rejecting ? (
           <>
-            <button
+            <Button
               type="button"
               onClick={() => setRejecting(true)}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+              variant="ghost"
+              size="xs"
+              className="text-red-700 hover:bg-red-50"
+              icon={<X className="h-3.5 w-3.5" />}
             >
-              <X className="h-3.5 w-3.5" /> Reject
-            </button>
-            <button
+              Reject
+            </Button>
+            <Button
               type="button"
               onClick={onApprove}
               disabled={busy || !title.trim() || !slugValid || !body.trim()}
-              className={clsx(
-                "inline-flex items-center gap-1 rounded px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50",
-                edited
-                  ? "bg-amber-600 hover:bg-amber-700"
-                  : "bg-violet-600 hover:bg-violet-700",
-              )}
+              variant="primary"
+              size="xs"
+              className="bg-amber-600 hover:bg-amber-700"
+              icon={<Check className="h-3.5 w-3.5" />}
             >
-              <Check className="h-3.5 w-3.5" />{" "}
               {edited ? "Edit & Approve" : "Approve"}
-            </button>
+            </Button>
           </>
         ) : (
           <>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 setRejecting(false);
                 setRejectReason("");
               }}
               disabled={busy}
-              className="rounded px-2 py-1 text-[12px] text-ink-muted hover:bg-black/5 disabled:opacity-50"
+              variant="ghost"
+              size="xs"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={onReject}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded bg-red-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              variant="danger"
+              size="xs"
+              icon={<X className="h-3.5 w-3.5" />}
             >
-              <X className="h-3.5 w-3.5" /> Send rejection
-            </button>
+              Send rejection
+            </Button>
           </>
         )}
       </div>
@@ -261,7 +265,7 @@ function Field({
 }) {
   return (
     <label className="mt-2 block first:mt-0">
-      <div className="mb-0.5 flex items-center justify-between text-[10.5px] font-medium uppercase tracking-wide text-ink-subtle">
+      <div className="mb-0.5 flex items-center justify-between text-[10.5px] font-medium uppercase text-ink-subtle">
         <span>{label}</span>
         {hint && (
           <span className="text-[10px] normal-case text-red-700">{hint}</span>

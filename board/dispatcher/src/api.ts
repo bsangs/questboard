@@ -196,14 +196,12 @@ export class ServerApi {
   /**
    * Server-side fast-forward merge pre-attempt. Called before the
    * dispatcher would otherwise spawn a Claude merger. The server tries
-   * `git merge --ff-only origin/<wip_branch>` directly and runs the
-   * discovered install / typecheck / build / test gates; on success it
-   * pushes and routes the card through the normal `mergerComplete` path.
+   * configured fast-forward merge command directly; on success it pushes
+   * and routes the card through the normal `mergerComplete` path.
    *
-   * The HTTP timeout for this call is generous because the underlying
-   * gates can take minutes (build, tests). We override the default 30s
-   * timeout with 30 minutes so the dispatcher doesn't time out on a
-   * legitimately slow build.
+   * The HTTP timeout for this call is generous because configured shell
+   * commands can take minutes. We override the default 30s timeout with
+   * 30 minutes so the dispatcher doesn't time out on a slow merge path.
    *
    * Response shape:
    *   { ok: true, merged_sha, status, ran }
@@ -227,10 +225,7 @@ export class ServerApi {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
-      // 30 minutes — long enough for a real build + test run on
-      // medium-sized repos. The server-side `runShell` already enforces a
-      // 20-minute per-gate timeout, so this only needs to outlast the
-      // sum of gates plus install plus push.
+      // 30 minutes — long enough for a slow configured merge path.
       signal: AbortSignal.timeout(30 * 60_000),
     });
     let parsed: unknown = null;

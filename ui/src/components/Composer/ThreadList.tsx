@@ -15,7 +15,7 @@
  */
 
 import clsx from "clsx";
-import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Check, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   deleteComposerThread,
@@ -24,6 +24,8 @@ import {
   patchComposerThread,
 } from "@/lib/composer";
 import { useBoard } from "@/lib/state";
+import { SelectionModeToolbar, StatusDot } from "@/components/patterns";
+import { Button, IconButton } from "@/components/ui";
 import type {
   ComposerProcessStatus,
   ComposerThreadSummary,
@@ -53,6 +55,11 @@ export function ComposerThreadList({ query, onSelected }: Props) {
   const [loaded, setLoaded] = useState(0);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
 
   // First-page load — happens once on mount. Subsequent loads pull the
   // next slice via "Load more".
@@ -83,6 +90,21 @@ export function ComposerThreadList({ query, onSelected }: Props) {
       alive = false;
     };
   }, [setComposerThreads, pushToast]);
+
+  useEffect(() => {
+    setSelectedThreadIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (threads[id]) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [threads]);
 
   const loadMore = async () => {
     setLoading(true);
@@ -119,17 +141,80 @@ export function ComposerThreadList({ query, onSelected }: Props) {
     }
   };
 
+  const deleteThreads = async (ids: string[]) => {
+    const uniqueIds = Array.from(new Set(ids)).filter((id) => threads[id]);
+    const deletedIds: string[] = [];
+    let firstError: unknown = null;
+
+    for (const id of uniqueIds) {
+      try {
+        await deleteComposerThread(id);
+        removeComposerThread(id);
+        deletedIds.push(id);
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
+
+    if (deletedIds.length > 0) {
+      setLoaded((n) => Math.max(0, n - deletedIds.length));
+      setTotal((n) => Math.max(0, n - deletedIds.length));
+      setSelectedThreadIds((prev) => {
+        const next = new Set(prev);
+        for (const id of deletedIds) next.delete(id);
+        return next;
+      });
+    }
+
+    return { deleted: deletedIds.length, firstError };
+  };
+
   const onDelete = async (id: string) => {
     if (!confirm("Delete this thread? Worktree + transcript will be removed.")) return;
     try {
-      await deleteComposerThread(id);
-      removeComposerThread(id);
-      pushToast({ kind: "info", message: "Thread deleted." });
+      const { deleted, firstError } = await deleteThreads([id]);
+      if (firstError) throw firstError;
+      if (deleted > 0) pushToast({ kind: "info", message: "Thread deleted." });
     } catch (e) {
       pushToast({
         kind: "error",
         message: e instanceof Error ? e.message : String(e),
       });
+    }
+  };
+
+  const onDeleteSelected = async () => {
+    const ids = Array.from(selectedThreadIds).filter((id) => threads[id]);
+    if (ids.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${ids.length} selected thread${ids.length === 1 ? "" : "s"}? Worktrees + transcripts will be removed.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingSelected(true);
+    try {
+      const { deleted, firstError } = await deleteThreads(ids);
+      if (firstError) {
+        pushToast({
+          kind: "error",
+          message:
+            deleted > 0
+              ? `Deleted ${deleted}; some threads failed to delete.`
+              : firstError instanceof Error
+                ? firstError.message
+                : String(firstError),
+        });
+        return;
+      }
+      pushToast({
+        kind: "info",
+        message: `${deleted} thread${deleted === 1 ? "" : "s"} deleted.`,
+      });
+      setSelectionMode(false);
+    } finally {
+      setDeletingSelected(false);
     }
   };
 
@@ -157,9 +242,86 @@ export function ComposerThreadList({ query, onSelected }: Props) {
   const visible = (q ? all.filter((t) => t.title.toLowerCase().includes(q)) : all)
     .slice()
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  const visibleIds = visible.map((t) => t.id);
+  const selectedCount = selectedThreadIds.size;
+  const selectedVisibleCount = visibleIds.filter((id) =>
+    selectedThreadIds.has(id),
+  ).length;
+  const allVisibleSelected =
+    visibleIds.length > 0 && selectedVisibleCount === visibleIds.length;
+
+  const toggleVisibleSelection = () => {
+    setSelectedThreadIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleThreadSelection = (id: string) => {
+    setSelectedThreadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const enterSelectionMode = () => {
+    setSelectionMode(true);
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedThreadIds(new Set());
+  };
+
+  const handleRowClick = (id: string) => {
+    if (selectionMode) {
+      toggleThreadSelection(id);
+      return;
+    }
+    void select(id);
+  };
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      {visible.length > 0 && (
+        <div
+          className={clsx(
+            "flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5 text-[11px]",
+            selectionMode
+              ? "border-emerald-100 bg-emerald-50/80"
+              : "border-border bg-surface/60",
+          )}
+        >
+          <div className="ml-auto w-full">
+            <SelectionModeToolbar
+              active={selectionMode}
+              count={selectedCount}
+              onEnter={enterSelectionMode}
+              onExit={exitSelectionMode}
+              onToggleAll={toggleVisibleSelection}
+              allSelected={allVisibleSelected}
+              action={
+                <Button
+                  variant="danger"
+                  size="xs"
+                  icon={<Trash2 className="h-3.5 w-3.5" />}
+                  disabled={selectedCount === 0 || deletingSelected}
+                  onClick={onDeleteSelected}
+                >
+                  {deletingSelected ? "Deleting" : "Delete"}
+                </Button>
+              }
+            />
+          </div>
+        </div>
+      )}
       <ol className="flex-1 overflow-y-auto px-1 py-1">
         {visible.length === 0 && !loading && (
           <li className="px-2 py-3 text-[11.5px] text-ink-subtle">
@@ -171,7 +333,10 @@ export function ComposerThreadList({ query, onSelected }: Props) {
             key={t.id}
             t={t}
             active={t.id === activeId}
-            onSelect={() => select(t.id)}
+            selected={selectedThreadIds.has(t.id)}
+            selectionMode={selectionMode}
+            onSelect={() => handleRowClick(t.id)}
+            onToggleSelected={() => toggleThreadSelection(t.id)}
             onDelete={() => onDelete(t.id)}
             onRename={() => onRename(t.id, t.title)}
           />
@@ -185,7 +350,7 @@ export function ComposerThreadList({ query, onSelected }: Props) {
         <button
           onClick={loadMore}
           disabled={loading}
-          className="border-t border-black/5 px-3 py-2 text-[11.5px] font-medium text-ink-muted hover:bg-black/5 disabled:opacity-50"
+          className="border-t border-border px-3 py-2 text-[11.5px] font-medium text-ink-muted hover:bg-surface-muted disabled:opacity-50"
         >
           {loading ? "Loading…" : `Load more (${total - loaded})`}
         </button>
@@ -194,23 +359,32 @@ export function ComposerThreadList({ query, onSelected }: Props) {
   );
 }
 
-const STATUS_DOT: Record<ComposerProcessStatus, string> = {
-  idle: "bg-gray-300",
-  running: "bg-emerald-500 animate-pulse",
-  awaiting: "bg-amber-500",
-  error: "bg-red-500",
+const STATUS_DOT: Record<
+  ComposerProcessStatus,
+  { tone: "neutral" | "green" | "amber" | "red"; pulse?: boolean }
+> = {
+  idle: { tone: "neutral" },
+  running: { tone: "green", pulse: true },
+  awaiting: { tone: "amber" },
+  error: { tone: "red" },
 };
 
 function ThreadRow({
   t,
   active,
+  selected,
+  selectionMode,
   onSelect,
+  onToggleSelected,
   onDelete,
   onRename,
 }: {
   t: ComposerThreadSummary;
   active: boolean;
+  selected: boolean;
+  selectionMode: boolean;
   onSelect: () => void;
+  onToggleSelected: () => void;
   onDelete: () => void;
   onRename: () => void;
 }) {
@@ -250,19 +424,21 @@ function ThreadRow({
         setMenuOpen(true);
       }}
       className={clsx(
-        "group relative cursor-pointer rounded px-2 py-2 text-[12.5px]",
-        active ? "bg-ink/5" : "hover:bg-black/5",
+        "group relative cursor-pointer rounded-lg px-2 py-2 text-[12.5px] transition",
+        selected
+          ? "bg-emerald-50 shadow-sm ring-1 ring-emerald-300"
+          : active
+            ? "bg-ink/5"
+            : "hover:bg-surface-muted",
+        selectionMode && !selected && "hover:bg-emerald-50/60",
       )}
       onClick={onSelect}
     >
       <div className="flex items-start gap-2">
-        <span
-          aria-hidden
-          className={clsx(
-            "mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-            STATUS_DOT[t.status] ?? "bg-gray-300",
-          )}
-          title={t.status}
+        <StatusDot
+          tone={STATUS_DOT[t.status]?.tone ?? "neutral"}
+          pulse={STATUS_DOT[t.status]?.pulse}
+          className="mt-1"
         />
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium text-ink">{t.title || "(untitled)"}</div>
@@ -278,21 +454,43 @@ function ThreadRow({
             )}
           </div>
         </div>
-        <button
-          aria-label="Thread actions"
-          onClick={(e) => {
-            e.stopPropagation();
-            setMenuOpen((v) => !v);
-          }}
-          className="invisible shrink-0 rounded p-0.5 text-ink-subtle hover:bg-black/10 group-hover:visible"
-        >
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </button>
+        {selectionMode ? (
+          <IconButton
+            aria-label={selected ? "Unselect thread" : "Select thread"}
+            aria-pressed={selected}
+            label={selected ? "Unselect thread" : "Select thread"}
+            size="xs"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelected();
+            }}
+            className={clsx(
+              "ml-1 h-5 w-5 rounded-full",
+              selected
+                ? "border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600"
+                : "border-border bg-surface text-transparent group-hover:border-emerald-300",
+            )}
+          >
+            <Check className="h-3.5 w-3.5" />
+          </IconButton>
+        ) : (
+          <IconButton
+            label="Thread actions"
+            size="xs"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((v) => !v);
+            }}
+            className="invisible group-hover:visible"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </IconButton>
+        )}
       </div>
-      {menuOpen && (
+      {menuOpen && !selectionMode && (
         <div
           ref={menuRef}
-          className="absolute right-2 top-7 z-10 w-32 rounded-md border border-black/10 bg-white py-1 text-[12px] shadow-lg"
+          className="absolute right-2 top-7 z-10 w-32 rounded-md border border-border bg-surface py-1 text-[12px] shadow-popover"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -300,7 +498,7 @@ function ThreadRow({
               setMenuOpen(false);
               onRename();
             }}
-            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-ink hover:bg-black/5"
+            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-ink hover:bg-surface-muted"
           >
             <Pencil className="h-3.5 w-3.5" /> Rename
           </button>

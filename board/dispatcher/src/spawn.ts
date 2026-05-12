@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { parseCardMd, isConversationKind, type Comment } from "@questboard/core";
+import type { MergeCommandsConfig } from "@questboard/core";
 import type { DispatcherConfig } from "./config.js";
 import type { QueueCandidate } from "./queue.js";
 import {
@@ -20,21 +21,14 @@ import {
   listPriorWipCommits,
   prepareWorktree,
 } from "./git.js";
-// TODO(X-srv): these utilities are slated to live under
-// `questboard/board/server/src/util/`. The dispatcher is in a separate
-// package, so once X-srv lands them we'll either re-export them through
-// @questboard/core or land a thin local copy under `./util/`. Until then,
-// the local stubs below are best-effort no-ops so worker spawn keeps
-// functioning end-to-end.
-import {
-  discoverCommands,
-  type DiscoveredCommands,
-} from "./util/command-discovery.js";
-import { runInstall } from "./util/install.js";
+import { runCommandHook } from "./util/hooks.js";
 import {
   composeSystemPrompt,
+  readBaseBranch,
   readBasePrompt,
-  readMergerPostBuildCmd,
+  readHelperEnvironment,
+  readMergeCommands,
+  readRolePromptAppend,
   readScope,
   readToolGuidance,
 } from "./context.js";
@@ -91,6 +85,8 @@ export interface SpawnedWorker {
   /** Worktree the dispatcher prepared for this run. (For reviewer the
    *  cwd is BOARD_ROOT; this still references the worker branch's tree.) */
   worktreePath: string;
+  /** Actual cwd used for helper prompt execution and lifecycle hooks. */
+  hookCwd: string;
   /** Branch the worker is committing on. */
   wipBranch: string;
   /** What kind of process this is. Drives exit-handler routing. */
@@ -596,6 +592,7 @@ export async function spawnWorker(
   // Worker never touches .questboard/data/ itself.
   const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
   const parsed = parseCardMd(cardMd);
+  const baseBranch = readBaseBranch(cfg);
 
   // Prepare worktree (or reuse on resumption). Worker branches use
   // worker/card-<id>.
@@ -605,7 +602,7 @@ export async function spawnWorker(
     worktreesDir: cfg.worktreesDir,
     cardId: card.id,
     branch: wipBranch,
-    baseBranch: cfg.baseBranch,
+    baseBranch,
   });
 
   // Surface orphan-resume on the card so the human can see WHY a fresh
@@ -640,48 +637,18 @@ export async function spawnWorker(
     scopeDescription: scope?.description ?? "",
     toolGuidance: readToolGuidance(cfg, WORKER_ALLOWED_TOOLS),
     rolePrompt,
+    rolePromptAppend: readRolePromptAppend(cfg, "worker"),
   });
   const conversation = readConversation(
     path.join(cfg.cardsDir, card.id, "comments.jsonl"),
   );
-
-  // Discover commands BEFORE rendering the spawn message — the env vars
-  // we set below let the worker shell out without re-deriving the package
-  // manager. Discovery is a sync filesystem read; cheap.
-  const commands: DiscoveredCommands = discoverCommands(wt.worktreePath);
-
-  // Run install BEFORE spawning the worker. Fresh worktrees never have
-  // node_modules, so any worker that touches a JS/TS dep would fail
-  // first-step. Best-effort: log failures but don't abort the spawn —
-  // the worker can self-heal if needed.
-  if (commands.installCmd) {
-    const result = await runInstall({
-      cwd: wt.worktreePath,
-      installCmd: commands.installCmd,
-      log: (e) =>
-        process.stdout.write(
-          JSON.stringify({ ts: new Date().toISOString(), card_id: card.id, ...e }) + "\n",
-        ),
-    });
-    if (result.error) {
-      process.stdout.write(
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          event: "install_warning",
-          card_id: card.id,
-          message: `pre-spawn install reported errors (continuing): ${result.error}`,
-          exit_code: result.exitCode,
-        }) + "\n",
-      );
-    }
-  }
 
   const previousAttempts = await formatPreviousAttemptsSection({
     attempt,
     boardRoot: cfg.boardRoot,
     wipBranch,
     comments: conversation,
-    baseBranch: cfg.baseBranch,
+    baseBranch,
   });
 
   const spawnMessage = buildSpawnMessage({
@@ -696,6 +663,38 @@ export async function spawnWorker(
     scopeCwd: scope?.cwd,
     cardId: card.id,
     role: "worker",
+  });
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...readHelperEnvironment(cfg),
+    // In session mode we forward NO ANTHROPIC_* env so the child uses claude's
+    // login session. In bare mode we forward only what's actually set —
+    // ANTHROPIC_BASE_URL is optional even in bare mode (claude defaults to
+    // its built-in base URL when only the API key is present).
+    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
+    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    BOARD_ROOT: cfg.boardRoot,
+    BOARD_SERVER_URL: cfg.serverUrl,
+    BOARD_DATA: cfg.boardData,
+    BOARD_WORKTREES: cfg.worktreesDir,
+    CARD_ID: card.id,
+    ATTEMPT: String(attempt),
+  };
+
+  await runCommandHook({
+    cfg,
+    stage: "in_progress",
+    phase: "pre",
+    cwd: spawnCwd,
+    env,
+    cardId: card.id,
+    attempt,
+    wipBranch,
+    log: (e) =>
+      process.stdout.write(
+        JSON.stringify({ ts: new Date().toISOString(), ...e }) + "\n",
+      ),
   });
 
   const args: string[] = [
@@ -715,29 +714,6 @@ export async function spawnWorker(
     "--verbose",
     spawnMessage,
   ];
-
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    // In session mode we forward NO ANTHROPIC_* env so the child uses claude's
-    // login session. In bare mode we forward only what's actually set —
-    // ANTHROPIC_BASE_URL is optional even in bare mode (claude defaults to
-    // its built-in base URL when only the API key is present).
-    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
-    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
-    BOARD_ROOT: cfg.boardRoot,
-    BOARD_SERVER_URL: cfg.serverUrl,
-    BOARD_DATA: cfg.boardData,
-    BOARD_WORKTREES: cfg.worktreesDir,
-    CARD_ID: card.id,
-    ATTEMPT: String(attempt),
-    // Per-project commands discovered from the worktree's lockfile +
-    // package.json. Empty strings are intentional ("no such command")
-    // so the worker can `[ -n "$BOARD_TEST_CMD" ]`-guard cleanly.
-    BOARD_INSTALL_CMD: commands.installCmd ?? "",
-    BOARD_TEST_CMD: commands.testCmd ?? "",
-    BOARD_BUILD_CMD: commands.buildCmd ?? "",
-    BOARD_TYPECHECK_CMD: commands.typecheckCmd ?? "",
-  };
 
   // Open the transcript file ONCE and pass the raw fd to stdio. The child
   // gets its own dup'd fd via fork/exec — when the dispatcher dies our copy
@@ -783,6 +759,7 @@ export async function spawnWorker(
     startedAt: new Date().toISOString(),
     transcriptPath,
     worktreePath: wt.worktreePath,
+    hookCwd: spawnCwd,
     wipBranch,
     exitStartedAt: null,
   };
@@ -834,14 +811,15 @@ interface ReviewerGitContext {
 async function gatherReviewerGitContext(
   boardRoot: string,
   wipBranch: string,
+  baseBranch = "main",
 ): Promise<ReviewerGitContext> {
   await gitCapture(boardRoot, ["fetch", "origin"]);
 
   const base =
-    (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", "origin/main"])) !== null
-      ? "origin/main"
-      : (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", "main"])) !== null
-        ? "main"
+    (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", `origin/${baseBranch}`])) !== null
+      ? `origin/${baseBranch}`
+      : (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", baseBranch])) !== null
+        ? baseBranch
         : "HEAD~1";
   const branchRef =
     (await gitCapture(boardRoot, ["rev-parse", "--verify", "--quiet", `origin/${wipBranch}`])) !== null
@@ -1007,6 +985,7 @@ export async function spawnReviewer(
   const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
   const parsed = parseCardMd(cardMd);
   const wipBranch = `worker/card-${card.id}`;
+  const baseBranch = readBaseBranch(cfg);
 
   const reviewerPromptPath = path.join(cfg.promptsDir, "reviewer.md");
   const rolePrompt = fs.readFileSync(reviewerPromptPath, "utf8");
@@ -1016,6 +995,7 @@ export async function spawnReviewer(
     scopeDescription: scope?.description ?? "",
     toolGuidance: readToolGuidance(cfg, REVIEWER_ALLOWED_TOOLS),
     rolePrompt,
+    rolePromptAppend: readRolePromptAppend(cfg, "reviewer"),
   });
   const conversation = readConversation(
     path.join(cfg.cardsDir, card.id, "comments.jsonl"),
@@ -1024,7 +1004,7 @@ export async function spawnReviewer(
   // Pre-compute commits + diff server-side so the reviewer doesn't need any
   // git access. Large payloads are written to runtime files and referenced from
   // the prompt so the claude argv stays small.
-  const gitCtx = await gatherReviewerGitContext(cfg.boardRoot, wipBranch);
+  const gitCtx = await gatherReviewerGitContext(cfg.boardRoot, wipBranch, baseBranch);
   const reviewerContext = writeReviewerContextFiles({
     boardRoot: cfg.boardRoot,
     cardsDir: cfg.cardsDir,
@@ -1078,6 +1058,7 @@ export async function spawnReviewer(
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...readHelperEnvironment(cfg),
     // See spawnWorker for auth-mode rationale.
     ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
     ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
@@ -1089,6 +1070,21 @@ export async function spawnReviewer(
     WIP_BRANCH: wipBranch,
     ATTEMPT: String(attempt),
   };
+
+  await runCommandHook({
+    cfg,
+    stage: "ai_review",
+    phase: "pre",
+    cwd: spawnCwd,
+    env,
+    cardId: card.id,
+    attempt,
+    wipBranch,
+    log: (e) =>
+      process.stdout.write(
+        JSON.stringify({ ts: new Date().toISOString(), ...e }) + "\n",
+      ),
+  });
 
   // See spawnWorker for rationale: fd-stdio + detached + unref so the
   // reviewer survives a dispatcher restart without SIGPIPE.
@@ -1127,6 +1123,7 @@ export async function spawnReviewer(
     startedAt: new Date().toISOString(),
     transcriptPath,
     worktreePath: cfg.boardRoot, // reviewer cwd
+    hookCwd: spawnCwd,
     wipBranch,
     exitStartedAt: null,
   };
@@ -1139,48 +1136,84 @@ function buildMergerMessage(args: {
   title: string;
   description: string;
   wipBranch: string;
+  baseBranch: string;
+  mergeCommands: MergeCommandsConfig;
   comments: Comment[];
 }): string {
   const conversation = formatConversationSection(args.comments);
+  const commandLines = formatMergeCommands(args.mergeCommands, {
+    baseBranch: args.baseBranch,
+    branch: args.wipBranch,
+    cardId: args.id,
+  });
   return [
     `# Card ${args.id}: ${args.title} — MERGE`,
     "",
-    "You are merging the worker's branch into main. Your CWD is the main",
-    "repo root. The worker's branch is `" + args.wipBranch + "`.",
+    "You are merging the worker's branch into the configured base branch.",
+    `Base branch: \`${args.baseBranch}\``,
+    `Worker branch: \`${args.wipBranch}\``,
     "",
     "## Description (for context)",
     "",
     args.description.trim() || "(no description)",
     "",
     conversation,
+    "## Configured merge commands",
+    "",
+    "Use these configured commands as the starting point. Blank commands are",
+    "intentionally skipped. If fast-forward failed, perform the equivalent",
+    "normal merge and resolve conflicts. Push only if a configured command",
+    "or explicit project instruction requires it. Placeholders are already",
+    "rendered in the command list below.",
+    "",
+    "```bash",
+    commandLines,
+    "```",
+    "",
     "## Your job (in order)",
     "",
-    "1. `git fetch origin`",
-    "2. `git checkout main && git pull --ff-only origin main` (you must be on",
-    "   main; never push from another branch).",
-    "3. `git merge --ff-only origin/" + args.wipBranch + "`. If ff-merge fails:",
-    "   - Try `git merge origin/" + args.wipBranch + "` and resolve any",
-    "     conflicts (preserve the worker's intent; main wins on truly",
-    "     unrelated drift).",
-    "   - Run typecheck + tests after resolution. If they fail, abort:",
-    "     `git merge --abort` and exit with FAIL.",
-    "4. `git push origin main`",
-    "5. `git push origin --delete " + args.wipBranch + "` (clean up).",
+    "1. Bring the base branch up to date.",
+    "2. Merge the worker branch and resolve conflicts.",
+    "3. Run project-appropriate verification from repo docs, package scripts,",
+    "   custom role prompt, or custom env.",
+    "4. Push only if the configured workflow says to push.",
+    "5. Clean up the worker branch if the configured workflow says to clean up.",
     "",
     "## Verdict (final assistant message)",
     "",
     "On success:",
     "  Last line MUST be exactly: `MERGED: <sha>` where <sha> is the new",
-    "  origin/main HEAD short sha (`git rev-parse --short=12 HEAD`).",
+    "  base branch HEAD short sha (`git rev-parse --short=12 HEAD`).",
     "",
     "On failure:",
     "  Last line MUST start with: `FAILED: <one-line reason>`",
     "  Then exit. The dispatcher routes the card back to in_progress for a",
     "  fresh worker attempt.",
     "",
-    "Hard rules: never force-push main, never amend main commits, never edit",
-    "files except to resolve conflicts.",
+    "Hard rules: never force-push the base branch, never amend existing",
+    "commits, never edit files except to resolve conflicts or mechanical",
+    "post-merge verification fallout.",
   ].join("\n");
+}
+
+function formatMergeCommands(
+  commands: MergeCommandsConfig,
+  vars: { baseBranch: string; branch: string; cardId: string },
+): string {
+  return commands
+    .map((step, index) => {
+      const raw = step.command?.trim();
+      const rendered = raw
+        ? raw
+            .replaceAll("{base_branch}", vars.baseBranch)
+            .replaceAll("{wip_branch}", vars.branch)
+            .replaceAll("{card_id}", vars.cardId)
+            .replaceAll("{worktree_path}", `.questboard/worktrees/card-${vars.cardId}`)
+        : "(skip)";
+      const required = step.required ? "required" : "optional";
+      return `# ${index + 1}. ${step.label} (${required})\n${rendered}`;
+    })
+    .join("\n\n");
 }
 
 export async function spawnMerger(
@@ -1206,15 +1239,20 @@ export async function spawnMerger(
     scopeDescription: scope?.description ?? "",
     toolGuidance: readToolGuidance(cfg, MERGER_ALLOWED_TOOLS),
     rolePrompt,
+    rolePromptAppend: readRolePromptAppend(cfg, "merger"),
   });
   const conversation = readConversation(
     path.join(cfg.cardsDir, card.id, "comments.jsonl"),
   );
+  const baseBranch = readBaseBranch(cfg);
+  const mergeCommands = readMergeCommands(cfg);
   const spawnMessage = buildMergerMessage({
     id: card.id,
     title: parsed.frontmatter.title,
     description: parsed.description,
     wipBranch,
+    baseBranch,
+    mergeCommands,
     comments: conversation,
   });
   const spawnCwd = resolveSpawnCwd({
@@ -1241,21 +1279,9 @@ export async function spawnMerger(
     spawnMessage,
   ];
 
-  // Read the user-configured post-build command from config.json on each
-  // spawn so changes via Settings → Merger take effect without a restart.
-  const postBuildCmd = readMergerPostBuildCmd(cfg);
-
-  // Discover the project's package manager + standard scripts and surface
-  // them as env vars. The merger prompt expects the same names a worker
-  // sees (install/test/build/typecheck) so it can run e.g. a final
-  // `$BOARD_BUILD_CMD` post-conflict-resolution without re-deriving the
-  // toolchain. Discovery runs from the merger's cwd (BOARD_ROOT, possibly
-  // narrowed by scope.cwd) — the cwd contains the project's lockfile +
-  // package.json, which is what `discoverCommands` keys off.
-  const cmds = discoverCommands(spawnCwd);
-
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...readHelperEnvironment(cfg),
     // See spawnWorker for auth-mode rationale.
     ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
     ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
@@ -1266,20 +1292,22 @@ export async function spawnMerger(
     CARD_ID: card.id,
     WIP_BRANCH: wipBranch,
     ATTEMPT: String(attempt),
-    // Only inject the env var when the user actually configured a command,
-    // so the merger prompt's "if set and non-empty" check is unambiguous.
-    ...(postBuildCmd !== null
-      ? { BOARD_MERGER_POST_BUILD_CMD: postBuildCmd }
-      : {}),
-    // Discovery util returns null for any command it couldn't pin down
-    // (e.g. no package.json, missing script). Inject only the ones we
-    // actually have so the merger prompt's "if set and non-empty" check
-    // is consistent with $BOARD_MERGER_POST_BUILD_CMD above.
-    ...(cmds.installCmd !== null ? { BOARD_INSTALL_CMD: cmds.installCmd } : {}),
-    ...(cmds.testCmd !== null ? { BOARD_TEST_CMD: cmds.testCmd } : {}),
-    ...(cmds.buildCmd !== null ? { BOARD_BUILD_CMD: cmds.buildCmd } : {}),
-    ...(cmds.typecheckCmd !== null ? { BOARD_TYPECHECK_CMD: cmds.typecheckCmd } : {}),
   };
+
+  await runCommandHook({
+    cfg,
+    stage: "merging",
+    phase: "pre",
+    cwd: spawnCwd,
+    env,
+    cardId: card.id,
+    attempt,
+    wipBranch,
+    log: (e) =>
+      process.stdout.write(
+        JSON.stringify({ ts: new Date().toISOString(), ...e }) + "\n",
+      ),
+  });
 
   // See spawnWorker for rationale: fd-stdio + detached + unref so the
   // merger survives a dispatcher restart without SIGPIPE.
@@ -1317,6 +1345,7 @@ export async function spawnMerger(
     startedAt: new Date().toISOString(),
     transcriptPath,
     worktreePath: cfg.boardRoot,
+    hookCwd: spawnCwd,
     wipBranch,
     exitStartedAt: null,
   };

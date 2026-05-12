@@ -155,7 +155,7 @@ export function Markdown({
                 href={resolved}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="my-2 inline-block max-w-full overflow-hidden rounded border border-black/10 align-top hover:border-black/30"
+                className="my-2 inline-block max-w-full overflow-hidden rounded border border-border-strong align-top hover:border-border-strong"
                 title={title || alt || "open full-size"}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -195,7 +195,7 @@ export function Markdown({
               {children}
             </blockquote>
           ),
-          hr: () => <hr className="my-3 border-black/10" />,
+          hr: () => <hr className="my-3 border-border-strong" />,
           table: ({ children }) => (
             <div className="mb-2 overflow-x-auto last:mb-0">
               <table className="min-w-full border-collapse text-[12px]">
@@ -204,12 +204,12 @@ export function Markdown({
             </div>
           ),
           th: ({ children }) => (
-            <th className="border border-black/10 bg-gray-50 px-2 py-1 text-left font-semibold">
+            <th className="border border-border-strong bg-gray-50 px-2 py-1 text-left font-semibold">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border border-black/10 px-2 py-1 align-top">
+            <td className="border border-border-strong px-2 py-1 align-top">
               {children}
             </td>
           ),

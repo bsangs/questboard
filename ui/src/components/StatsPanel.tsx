@@ -1,9 +1,9 @@
 "use client";
 
-import clsx from "clsx";
 import { useEffect } from "react";
 import { getStats } from "@/lib/api";
 import { useBoard } from "@/lib/state";
+import { MetricPill } from "./patterns";
 
 function fmtTokens(t: number): string {
   if (t < 1000) return String(t);
@@ -13,9 +13,8 @@ function fmtTokens(t: number): string {
 
 /**
  * Compact inline stats — meant to slot into the top header bar.
- * Shows only the metrics that aren't already in the workers/queued pills:
- * tokens(24h), done(1d), stuck(1d). Stays a single horizontal row so it
- * never overlaps the board.
+ * Shows only lifetime token metrics. Workers/queued live in Board.tsx so the
+ * header stays compact.
  */
 export function StatsPanel() {
   const stats = useBoard((s) => s.stats);
@@ -41,8 +40,6 @@ export function StatsPanel() {
 
   if (!stats) return null;
 
-  const stuck = stats.alerts_24h?.stuck ?? 0;
-  const done = stats.alerts_24h?.done ?? 0;
   const inTotal = stats.tokens_input_total ?? 0;
   const outTotal = stats.tokens_output_total ?? 0;
   const allTotal = stats.tokens_total ?? inTotal + outTotal;
@@ -52,23 +49,17 @@ export function StatsPanel() {
       <Pill
         label="Σ total"
         value={fmtTokens(allTotal)}
-        accent="bg-slate-100 text-slate-700"
+        tone="slate"
       />
       <Pill
         label="↓ total"
         value={fmtTokens(inTotal)}
-        accent="bg-indigo-50 text-indigo-700"
+        tone="blue"
       />
       <Pill
         label="↑ total"
         value={fmtTokens(outTotal)}
-        accent="bg-indigo-50 text-indigo-700"
-      />
-      <Pill label="done(1d)" value={String(done)} />
-      <Pill
-        label="stuck(1d)"
-        value={String(stuck)}
-        accent={stuck > 0 ? "text-amber-700 bg-amber-50" : undefined}
+        tone="blue"
       />
     </div>
   );
@@ -77,21 +68,11 @@ export function StatsPanel() {
 function Pill({
   label,
   value,
-  accent,
+  tone,
 }: {
   label: string;
   value: string;
-  accent?: string;
+  tone?: "neutral" | "blue" | "green" | "amber" | "red" | "slate";
 }) {
-  return (
-    <span
-      className={clsx(
-        "rounded bg-gray-100 px-1.5 py-0.5 font-mono whitespace-nowrap",
-        accent,
-      )}
-    >
-      <span className="text-ink-subtle">{label}</span>{" "}
-      <span className="text-ink">{value}</span>
-    </span>
-  );
+  return <MetricPill label={label} value={value} tone={tone} />;
 }

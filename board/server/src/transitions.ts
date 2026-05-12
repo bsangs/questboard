@@ -51,6 +51,7 @@ import { broadcast } from "./sse.js";
 import { alertCard } from "./telegram.js";
 import { detectLanguage } from "./lang.js";
 import { getConfig } from "./config.js";
+import { runCommandHook } from "./util/hooks.js";
 import { existsSync, readFileSync, openSync, closeSync, ftruncateSync, renameSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { env } from "./env.js";
@@ -473,6 +474,18 @@ export async function transitionToStuck(id: string, input: StuckInput): Promise<
   };
 
   const ev = systemEvent(`status: ${fromStatus} → stuck`);
+  await runCommandHook({
+    stage: "stuck",
+    phase: "pre",
+    cwd: env.BOARD_ROOT,
+    cardId: id,
+    env: {
+      CARD_ID: id,
+      FROM_STATUS: fromStatus,
+      STUCK_REASON: input.stuck_reason,
+      STUCK_QUESTION: input.stuck_question ?? "",
+    },
+  });
   await applyAtomic({
     cardId: id,
     before: card,
@@ -481,6 +494,18 @@ export async function transitionToStuck(id: string, input: StuckInput): Promise<
     history: [ev],
     sse: [statusEvent(id, fromStatus, "stuck"), commentEvent(id, stuckComment), historyEvent(id, ev)],
     alerts: [() => alertCard("stuck", { id, title: card.frontmatter.title, language: card.frontmatter.language, stuck_question: input.stuck_question ?? null, stuck_reason: input.stuck_reason })],
+  });
+  await runCommandHook({
+    stage: "stuck",
+    phase: "post",
+    cwd: env.BOARD_ROOT,
+    cardId: id,
+    env: {
+      CARD_ID: id,
+      FROM_STATUS: fromStatus,
+      STUCK_REASON: input.stuck_reason,
+      STUCK_QUESTION: input.stuck_question ?? "",
+    },
   });
   return next;
 }
@@ -578,14 +603,12 @@ export async function approveToMerging(id: string, by: "human" | "reviewer"): Pr
     ensureStatus(card, "ai_review");
     ensureCanTransition("ai_review", "merging", "reviewer");
   }
-  // Snapshot origin/main before the merger touches it. After ff merge,
-  // worktree HEAD == origin/main HEAD so a merge-base diff for done is
-  // empty. pre_merge_sha gives us the anchor to reconstruct the patch.
+  // Snapshot the configured base branch before the merger touches it.
+  // pre_merge_sha gives the diff tab a stable anchor after local merges.
   let preMergeSha: string | null = null;
   try {
-    const { gitMain, fetchOrigin } = await import("./git.js");
-    try { await fetchOrigin("main"); } catch { /* offline ok */ }
-    const r = await gitMain(["rev-parse", "origin/main"]);
+    const { gitMain } = await import("./git.js");
+    const r = await gitMain(["rev-parse", getConfig().git.base_branch]);
     preMergeSha = r.stdout.trim() || null;
   } catch (err) {
     logger.warn("pre_merge_sha_capture_failed", { id, err: String(err) });
@@ -611,62 +634,14 @@ export async function approveToMerging(id: string, by: "human" | "reviewer"): Pr
 }
 
 /**
- * Merger reported a clean merge — finalize.
- *
- * Two paths:
- *   1. No `merger_post_build_command` configured: transition merging→done
- *      immediately with merged_sha + done_at. (Original behaviour.)
- *   2. Command IS configured: save merged_sha but stay in `merging`. Spawn
- *      the bash command server-side (cwd=BOARD_ROOT) — no AI involved,
- *      just a plain `bash -lc <cmd>`. When it exits:
- *         success → transition merging→done with the cmd's output as a note
- *         failure → transition merging→stuck with the failure log
- *
- * The post-build runner registers a `workers` row for its own pid so the
- * dispatcher's sequential-merger gate (`isAnyMergerActive`) sees this card
- * as occupied and doesn't try to spawn another merger on top.
- *
- * Worktree + local branch are PRESERVED through done so the diff tab
- * continues to show what the worker built. Cleanup happens at archive
- * time only.
+ * Merger reported a clean merge — finalize immediately with merged_sha +
+ * done_at. The diff tab uses pre_merge_sha + merged_sha, so configured
+ * cleanup commands may remove the worker worktree/branch after the merge.
  */
 export async function mergerComplete(id: string, mergedSha: string): Promise<Card> {
   const { card } = loadCard(id);
   ensureStatus(card, "merging");
 
-  const cfg = await getConfig();
-  const postBuildCmd =
-    typeof cfg.merger_post_build_command === "string"
-      ? cfg.merger_post_build_command.trim()
-      : "";
-
-  if (postBuildCmd) {
-    // Path 2: hold at merging, run post-build async, transition later.
-    const next = bumpUpdated({
-      ...card,
-      frontmatter: {
-        ...card.frontmatter,
-        merged_sha: mergedSha,
-        // Status / owner_pid stay; the post-build pid will replace the
-        // merger pid in the workers table.
-      },
-    });
-    const ev = systemEvent(
-      `merger reported MERGED (sha=${mergedSha.slice(0, 12)}); running post-build`,
-    );
-    await applyAtomic({
-      cardId: id,
-      before: card,
-      after: next,
-      history: [ev],
-      sse: [historyEvent(id, ev)],
-    });
-    const { runPostBuildAsync } = await import("./post-build.js");
-    runPostBuildAsync(id, mergedSha, postBuildCmd);
-    return next;
-  }
-
-  // Path 1: no post-build → straight to done.
   ensureCanTransition("merging", "done", "dispatcher");
   const next = bumpUpdated({
     ...card,
@@ -674,8 +649,6 @@ export async function mergerComplete(id: string, mergedSha: string): Promise<Car
       ...card.frontmatter,
       status: "done",
       owner_pid: null,
-      // worktree + wip_branch INTENTIONALLY preserved on done so the diff
-      // tab remains viewable. Cleanup happens on archive (T15).
       merged_sha: mergedSha,
       done_at: ISO(),
     },
@@ -690,6 +663,7 @@ export async function mergerComplete(id: string, mergedSha: string): Promise<Car
     sse: [statusEvent(id, "merging", "done"), historyEvent(id, ev)],
     alerts: [() => alertCard("done", { id, title: card.frontmatter.title, language: card.frontmatter.language })],
   });
+
   return next;
 }
 
@@ -706,9 +680,8 @@ export async function noDiffComplete(
 
   let mergedSha = card.frontmatter.merged_sha;
   try {
-    const { gitMain, fetchOrigin } = await import("./git.js");
-    try { await fetchOrigin("main"); } catch { /* offline ok */ }
-    const r = await gitMain(["rev-parse", "origin/main"]);
+    const { gitMain } = await import("./git.js");
+    const r = await gitMain(["rev-parse", getConfig().git.base_branch]);
     mergedSha = r.stdout.trim() || mergedSha;
   } catch (err) {
     logger.warn("no_diff_complete_sha_failed", { id, err: String(err) });
@@ -738,91 +711,6 @@ export async function noDiffComplete(
     alerts: [() => alertCard("done", { id, title: card.frontmatter.title, language: card.frontmatter.language })],
   });
   return next;
-}
-
-/**
- * Called by the post-build runner on a successful exit (code 0).
- * Transitions merging→done, attaches the post-build output as a note
- * comment, sets done_at, and fires the Done alert.
- *
- * The merged_sha was already saved when we entered the merging hold;
- * this only flips status + done_at.
- */
-export async function mergerCompleteAfterPostBuild(
-  id: string,
-  mergedSha: string,
-  noteBody: string,
-): Promise<Card> {
-  const { card } = loadCard(id);
-  ensureStatus(card, "merging");
-  ensureCanTransition("merging", "done", "dispatcher");
-
-  const next = bumpUpdated({
-    ...card,
-    frontmatter: {
-      ...card.frontmatter,
-      status: "done",
-      owner_pid: null,
-      merged_sha: mergedSha,
-      done_at: ISO(),
-    },
-  });
-
-  const note: Comment = {
-    ts: ISO(),
-    author: "system",
-    kind: "note",
-    body: noteBody,
-  };
-  const ev = systemEvent(
-    `status: merging → done (sha=${mergedSha.slice(0, 12)}, post-build OK)`,
-  );
-  await applyAtomic({
-    cardId: id,
-    before: card,
-    after: next,
-    comments: [note],
-    history: [ev],
-    sse: [
-      statusEvent(id, "merging", "done"),
-      commentEvent(id, note),
-      historyEvent(id, ev),
-    ],
-    alerts: [
-      () =>
-        alertCard("done", {
-          id,
-          title: card.frontmatter.title,
-          language: card.frontmatter.language,
-        }),
-    ],
-  });
-  return next;
-}
-
-/**
- * Called by the post-build runner on a non-zero exit. Transitions
- * merging→stuck with stuck_reason="testing_failed" (closest enum to
- * "user-defined post-build gate failed") and pins the bash exit log
- * as the stuck comment so the user can see what broke.
- */
-export async function postBuildFailed(
-  id: string,
-  exitCode: number | null,
-  signal: string | null,
-  logTail: string,
-): Promise<Card> {
-  const head =
-    `Post-build command failed (exit=${exitCode ?? "null"}` +
-    (signal ? `, signal=${signal}` : "") +
-    `).`;
-  const body = logTail ? `${head}\n\n\`\`\`\n${logTail}\n\`\`\`` : head;
-  return transitionToStuck(id, {
-    stuck_reason: "testing_failed",
-    stuck_question: head,
-    comment_body: body,
-    author: "system",
-  });
 }
 
 /**
@@ -868,92 +756,13 @@ export async function mergerFailed(id: string, reason: string): Promise<Card> {
 }
 
 /**
- * Manual retry of the user-configured post-build command on a stuck card
- * whose code is already in origin/main (merged_sha set). Flips the card
- * back to `merging` so the UI shows a running pill, then kicks off a
- * fresh post-build run. The post-build runner's existing classification +
- * retry pipeline takes over from there.
- *
- * Guards (also enforced at the route layer):
- *   - status === "stuck"
- *   - merged_sha != null
- *   - merger_post_build_command configured
- *   - no active post-build for this card
- */
-export async function retryPostBuild(id: string): Promise<Card> {
-  const { card } = loadCard(id);
-  ensureStatus(card, "stuck");
-  if (card.frontmatter.merged_sha == null) {
-    throw new TransitionError(
-      "retry-post-build requires merged_sha (worker code must already be on origin/main)",
-      "no_merged_sha",
-      409,
-    );
-  }
-  const cfg = getConfig();
-  const cmd =
-    typeof cfg.merger_post_build_command === "string"
-      ? cfg.merger_post_build_command.trim()
-      : "";
-  if (!cmd) {
-    throw new TransitionError(
-      "retry-post-build requires merger_post_build_command in config",
-      "no_post_build_cmd",
-      409,
-    );
-  }
-  // Refuse if a run is already going. The route layer also checks this,
-  // but a concurrent retry/dispatcher race could slip through without
-  // this defense-in-depth check.
-  const { isPostBuildActive } = await import("./post-build.js");
-  if (isPostBuildActive(id)) {
-    throw new TransitionError(
-      "post-build is already running for this card",
-      "post_build_active",
-      409,
-    );
-  }
-  ensureCanTransition("stuck", "merging", "human");
-
-  const next = bumpUpdated({
-    ...card,
-    frontmatter: {
-      ...card.frontmatter,
-      status: "merging",
-      stuck_reason: null,
-      stuck_question: null,
-      // owner_pid is the post-build pid set inside runPostBuildAsync via the
-      // workers table; clear here so the SQL row doesn't show a stale pid.
-      owner_pid: null,
-    },
-  });
-  const ev = systemEvent(
-    `status: stuck → merging (retry-post-build sha=${card.frontmatter.merged_sha.slice(0, 12)})`,
-  );
-  await applyAtomic({
-    cardId: id,
-    before: card,
-    after: next,
-    history: [ev],
-    sse: [statusEvent(id, "stuck", "merging"), historyEvent(id, ev)],
-  });
-  // Kick off the actual post-build process. Async, returns immediately.
-  const { runPostBuildAsync } = await import("./post-build.js");
-  runPostBuildAsync(id, card.frontmatter.merged_sha, cmd);
-  return next;
-}
-
-/**
  * Manual override on a stuck card whose code is already in origin/main —
- * the user is accepting that the post-build/deploy step won't pass and
- * declaring the card done anyway. Common case: vercel was down, the user
- * deployed by hand, the code is fine. We keep merged_sha so the audit
- * trail still shows what shipped.
+ * the user is declaring the card done anyway. We keep merged_sha so the
+ * audit trail still shows what shipped.
  *
  * Guards (also enforced at the route layer):
  *   - status === "stuck"
  *   - merged_sha != null
- *   - no active post-build (user should stop it first)
  */
 export async function forceDoneFromStuck(
   id: string,
@@ -965,14 +774,6 @@ export async function forceDoneFromStuck(
     throw new TransitionError(
       "force-done requires merged_sha (worker code must already be on origin/main)",
       "no_merged_sha",
-      409,
-    );
-  }
-  const { isPostBuildActive } = await import("./post-build.js");
-  if (isPostBuildActive(id)) {
-    throw new TransitionError(
-      "stop the running post-build before force-done",
-      "post_build_active",
       409,
     );
   }
@@ -1035,37 +836,6 @@ export async function forceDoneFromStuck(
 }
 
 /**
- * SIGTERM whatever post-build process is currently running for this card.
- * The runner's exit handler takes over: it classifies the killed run,
- * records an attempt, and lands the card back in stuck (with reason
- * "testing_failed") since SIGTERM produces a non-zero exit. Returns the
- * pid that was signalled, or null if there was nothing running.
- */
-export async function stopPostBuild(id: string): Promise<number | null> {
-  const { stopActivePostBuild, getActivePostBuildPid, cancelPendingAutoRetry } =
-    await import("./post-build.js");
-  const pid = getActivePostBuildPid(id);
-  // Cancel any queued retry too — a "stop" should be a hard halt.
-  cancelPendingAutoRetry(id);
-  if (pid == null) {
-    return null;
-  }
-  // Append a short note BEFORE killing so users see WHY the next stuck
-  // happened. Best-effort.
-  try {
-    await appendComment(id, {
-      author: "human",
-      kind: "system_event",
-      body: `post-build manually stopped (pid=${pid})`,
-    });
-  } catch {
-    /* non-fatal */
-  }
-  stopActivePostBuild(id);
-  return pid;
-}
-
-/**
  * Generic re-queue: pop a card back to `ready` from any of the waiting/active
  * columns (stuck, human_review, ai_review, in_progress, merging). UI binds
  * the "drag back to Ready" gesture to this. Resets runtime fields so the
@@ -1081,12 +851,12 @@ export async function requeueCard(id: string): Promise<Card> {
   const from = card.frontmatter.status;
   // Stuck-with-merged_sha guard: the worker's code is already on
   // origin/main; re-queueing would re-spawn a worker on already-merged
-  // work → conflict / no-op / lost work. Force the user to either retry
-  // the post-build or accept it as done. STUCK_TRANSITIONS in
+  // work → conflict / no-op / lost work. Force the user to accept it as
+  // done. STUCK_TRANSITIONS in
   // @questboard/core encodes the canonical policy.
   if (from === "stuck" && card.frontmatter.merged_sha != null) {
     throw new TransitionError(
-      "cannot requeue stuck card whose merged_sha is set; use retry-post-build or force-done",
+      "cannot requeue stuck card whose merged_sha is set; use force-done",
       "stuck_already_merged",
       409,
     );
@@ -1661,4 +1431,3 @@ function detectCycle(cardId: string, newDeps: string[]): void {
     stack.push(...adj(cur));
   }
 }
-

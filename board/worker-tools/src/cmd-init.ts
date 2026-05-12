@@ -43,6 +43,10 @@ const DEFAULT_ENV = `# Anthropic API — OPTIONAL.
 #ANTHROPIC_BASE_URL=http://localhost:20128/v1
 #ANTHROPIC_API_KEY=
 
+# Local secret encryption key (optional).
+# Set this before creating role secret env values in Settings.
+#SECRET_KEY=
+
 # Telegram (optional — empty values disable notifications)
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
@@ -58,9 +62,6 @@ BOARD_UI_PORT=3030
 
 # Worker / reviewer helper CLI base URL.
 BOARD_SERVER_URL=http://localhost:3031
-
-# Concurrency
-BOARD_CONCURRENCY=4
 
 # Git
 # Optional base branch override. If unset, questboard tries origin/main, main,

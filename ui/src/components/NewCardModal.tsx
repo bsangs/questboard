@@ -12,6 +12,7 @@ import {
 import { useBoard } from "@/lib/state";
 import type { CardFlavor } from "@/lib/types";
 import clsx from "clsx";
+import { Button, IconButton, Input, Select, Textarea } from "./ui";
 
 const FLAVORS: CardFlavor[] = ["feature", "bug", "refactor", "chore", "docs"];
 
@@ -154,46 +155,43 @@ export function NewCardModal() {
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>
-        <button className="inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-[12.5px] font-medium text-white shadow-sm hover:bg-black">
-          <Plus className="h-3.5 w-3.5" /> New
-        </button>
-      </Dialog.Trigger>
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Trigger asChild>
+          <Button variant="primary" size="sm" icon={<Plus className="h-3.5 w-3.5" />}>
+            New
+          </Button>
+        </Dialog.Trigger>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-30 bg-black/30 animate-fadeIn" />
+        <Dialog.Overlay className="fixed inset-0 z-30 bg-slate-950/30 animate-fadeIn" />
         <Dialog.Content
           aria-label="New card"
-          className="fixed left-1/2 top-1/2 z-40 w-full max-w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-black/10 bg-white shadow-xl animate-fadeIn"
+          className="fixed left-1/2 top-1/2 z-40 w-full max-w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-strong bg-surface shadow-xl animate-fadeIn"
         >
-          <header className="flex items-center justify-between border-b border-black/5 px-5 py-3">
+          <header className="flex items-center justify-between border-b border-border px-5 py-3">
             <Dialog.Title className="text-[14px] font-semibold">
               New Card
             </Dialog.Title>
             <Dialog.Close asChild>
-              <button
-                aria-label="Close"
-                className="rounded p-1 text-ink-subtle hover:bg-black/5"
-              >
+              <IconButton label="Close" size="xs">
                 <X className="h-4 w-4" />
-              </button>
+              </IconButton>
             </Dialog.Close>
           </header>
 
           <div className="space-y-3 p-5">
             <Field label="Title" required>
-              <input
+              <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Short, action-oriented summary"
-                className="w-full rounded border border-black/10 px-2.5 py-1.5 text-[13px] focus:border-ink focus:outline-none"
+                className="text-[13px]"
                 autoFocus
               />
             </Field>
 
             <Field label="Description">
               <div className="relative">
-                <textarea
+                <Textarea
                   ref={descRef}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -204,63 +202,62 @@ export function NewCardModal() {
                   placeholder={
                     "Markdown supported. Paste / drop images to attach. Include context, acceptance criteria, etc."
                   }
-                  className="w-full resize-y rounded border border-black/10 p-2.5 font-mono text-[12.5px] focus:border-ink focus:outline-none"
+                  className="resize-y p-2.5 font-mono text-[12.5px]"
                 />
                 {/* Hidden file input + paperclip button so clicking the
                     button triggers the picker. The button sits in the
                     bottom-right of the textarea so it doesn't take the
                     whole row's vertical space. */}
                 <input {...fileInputProps} />
-                <button
+                <IconButton
                   type="button"
                   onClick={pickFile}
-                  className="absolute bottom-2 right-2 rounded p-1 text-ink-subtle hover:bg-black/5"
-                  title="Attach image"
+                  label="Attach image"
+                  size="xs"
+                  className="absolute bottom-2 right-2"
                 >
                   <ImagePlus className="h-3.5 w-3.5" />
-                </button>
+                </IconButton>
               </div>
             </Field>
 
             <div className="grid grid-cols-3 gap-3">
               <Field label="Language">
-                <input
+                <Input
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
                   placeholder="auto"
-                  className="w-full rounded border border-black/10 px-2.5 py-1.5 text-[13px] focus:border-ink focus:outline-none"
+                  className="text-[13px]"
                 />
               </Field>
               <Field label="Priority">
                 <div className="flex gap-1">
                   {[1, 2, 3].map((p) => (
-                    <button
+                    <Button
                       key={p}
                       type="button"
                       onClick={() => setPriority(p as 1 | 2 | 3)}
-                      className={`flex-1 rounded border px-2 py-1.5 text-[13px] font-medium ${
-                        priority === p
-                          ? "border-ink bg-ink text-white"
-                          : "border-black/10 text-ink-muted hover:bg-black/5"
-                      }`}
+                      variant={priority === p ? "primary" : "secondary"}
+                      size="sm"
+                      className="flex-1"
                     >
                       P{p}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </Field>
               <Field label="Flavor">
-                <select
+                <Select
                   value={flavor}
                   onChange={(e) => setFlavor(e.target.value as CardFlavor)}
-                  className="w-full rounded border border-black/10 px-2 py-1.5 text-[13px] focus:border-ink focus:outline-none"
+                  className="text-[13px]"
                 >
                   {FLAVORS.map((f) => (
                     <option key={f} value={f}>
                       {f}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
             </div>
 
@@ -272,12 +269,12 @@ export function NewCardModal() {
                   : "Optional. Injects scope guidance into helper prompts."
               }
             >
-              <select
+              <Select
                 value={scope}
                 onChange={(e) => setScope(e.target.value)}
                 disabled={scopes.length === 0}
                 className={clsx(
-                  "w-full rounded border border-black/10 px-2 py-1.5 text-[13px] focus:border-ink focus:outline-none",
+                  "text-[13px]",
                   scopes.length === 0 && "opacity-50",
                 )}
               >
@@ -287,35 +284,36 @@ export function NewCardModal() {
                     {s.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             <Field
               label="Dependencies"
               hint="Card IDs (4-digit), comma or space separated."
             >
-              <input
+              <Input
                 value={depsText}
                 onChange={(e) => setDepsText(e.target.value)}
                 placeholder="e.g. 0038, 0040"
-                className="w-full rounded border border-black/10 px-2.5 py-1.5 font-mono text-[12.5px] focus:border-ink focus:outline-none"
+                className="font-mono text-[12.5px]"
               />
             </Field>
           </div>
 
-          <footer className="flex items-center justify-end gap-2 border-t border-black/5 px-5 py-3">
+          <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
             <Dialog.Close asChild>
-              <button className="rounded px-3 py-1.5 text-[12.5px] text-ink-muted hover:bg-black/5">
+              <Button variant="ghost" size="sm">
                 Cancel
-              </button>
+              </Button>
             </Dialog.Close>
-            <button
+            <Button
               onClick={submit}
               disabled={busy || !title.trim()}
-              className="rounded bg-ink px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-black disabled:opacity-50"
+              variant="primary"
+              size="sm"
             >
               {busy ? "Creating…" : "Create →"}
-            </button>
+            </Button>
           </footer>
         </Dialog.Content>
       </Dialog.Portal>
@@ -336,7 +334,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <div className="mb-1 flex items-center justify-between text-[11.5px] font-medium uppercase tracking-wide text-ink-subtle">
+      <div className="mb-1 flex items-center justify-between text-[11.5px] font-medium uppercase text-ink-subtle">
         <span>
           {label}
           {required && <span className="text-red-500"> *</span>}

@@ -120,8 +120,8 @@ export const CardFrontmatter = z.object({
   archived_at: z.string().nullable().default(null),
 
   /**
-   * Audit trail of post-build runs against this card. Each entry records
-   * one execution of the user-configured `merger_post_build_command`:
+   * Historical audit trail of post-build runs against this card. Kept so
+   * cards created by older versions still parse and can show prior attempts:
    * timestamp, wall-clock duration, classification of the failure (or
    * "success"), and a short excerpt of the log tail used to classify.
    *
@@ -225,7 +225,206 @@ export const Scope = z.object({
 });
 export type Scope = z.infer<typeof Scope>;
 
+export const EnvVarName = z
+  .string()
+  .min(1)
+  .max(80)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+
+export const RoleName = z.enum(["worker", "reviewer", "merger"]);
+export type RoleName = z.infer<typeof RoleName>;
+
+export const RoleEnvVar = z.object({
+  name: EnvVarName,
+  value: z.string().max(20_000).default(""),
+});
+export type RoleEnvVar = z.infer<typeof RoleEnvVar>;
+
+export const RoleSecretEnvVar = z.object({
+  name: EnvVarName,
+  secret_ref: z.string().min(1).max(200),
+});
+export type RoleSecretEnvVar = z.infer<typeof RoleSecretEnvVar>;
+
+export const RoleConfig = z.object({
+  prompt_append: z.string().max(100_000).default(""),
+});
+export type RoleConfig = z.infer<typeof RoleConfig>;
+
+export const RolesConfig = z.object({
+  worker: RoleConfig.default({}),
+  reviewer: RoleConfig.default({}),
+  merger: RoleConfig.default({}),
+});
+export type RolesConfig = z.infer<typeof RolesConfig>;
+
+export const EnvironmentConfig = z.object({
+  env: z.array(RoleEnvVar).default([]),
+  secret_env: z.array(RoleSecretEnvVar).default([]),
+});
+export type EnvironmentConfig = z.infer<typeof EnvironmentConfig>;
+
+export const GitConfig = z.object({
+  base_branch: z.string().min(1).max(160).default("main"),
+  worker_branch_template: z
+    .string()
+    .min(1)
+    .max(240)
+    .default("worker/card-{card_id}"),
+  worktree_template: z.string().min(1).max(240).default("card-{card_id}"),
+  composer_worktree_template: z
+    .string()
+    .min(1)
+    .max(240)
+    .default("composer-{thread_id}"),
+});
+export type GitConfig = z.infer<typeof GitConfig>;
+
+const ShellCommand = z.string().max(20_000).nullable();
+
+export const MergeCommandStep = z.object({
+  id: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^[a-z0-9][a-z0-9_-]*$/),
+  label: z.string().min(1).max(80),
+  command: ShellCommand.default(null),
+  required: z.boolean().default(true),
+});
+export type MergeCommandStep = z.infer<typeof MergeCommandStep>;
+
+const DEFAULT_MERGE_COMMAND_STEPS: MergeCommandStep[] = [
+  {
+    id: "checkout-base",
+    label: "Checkout base",
+    command: "git checkout {base_branch}",
+    required: true,
+  },
+  {
+    id: "fast-forward",
+    label: "Fast-forward merge",
+    command: "git merge --ff-only {wip_branch}",
+    required: true,
+  },
+  {
+    id: "delete-local-branch",
+    label: "Delete local branch",
+    command:
+      "git worktree remove --force \"{worktree_path}\" 2>/dev/null || true; git branch -d {wip_branch}",
+    required: false,
+  },
+];
+
+const LEGACY_MERGE_COMMAND_LABELS: Record<string, string> = {
+  fetch: "Fetch",
+  checkout: "Checkout base",
+  pull: "Pull base",
+  ff_merge: "Fast-forward merge",
+  push: "Push base",
+  cleanup: "Cleanup branch",
+  reset: "Reset on failure",
+};
+
+const LEGACY_DEFAULT_MERGE_COMMANDS: Record<string, string> = {
+  fetch: "git fetch origin",
+  checkout: "git checkout {base_branch}",
+  pull: "git pull --ff-only origin {base_branch}",
+  ff_merge: "git merge --ff-only origin/{wip_branch}",
+  push: "git push origin {base_branch}",
+  cleanup: "git push origin --delete {wip_branch}",
+  reset: "git reset --hard origin/{base_branch}",
+};
+
+function normalizeMergeCommands(input: unknown): unknown {
+  if (Array.isArray(input)) return input;
+  if (!input || typeof input !== "object") return input;
+  const record = input as Record<string, unknown>;
+  const hasLegacyKey = Object.keys(LEGACY_MERGE_COMMAND_LABELS).some((key) =>
+    Object.prototype.hasOwnProperty.call(record, key),
+  );
+  if (!hasLegacyKey) return undefined;
+  const isOldDefault = Object.entries(LEGACY_DEFAULT_MERGE_COMMANDS).every(
+    ([key, value]) => record[key] === value,
+  );
+  if (isOldDefault) return undefined;
+  return Object.entries(LEGACY_MERGE_COMMAND_LABELS).map(([id, label]) => ({
+    id,
+    label,
+    command: record[id] ?? null,
+    required: id !== "cleanup",
+  }));
+}
+
+export const MergeCommandsConfig = z.preprocess(
+  normalizeMergeCommands,
+  z.array(MergeCommandStep).default(DEFAULT_MERGE_COMMAND_STEPS),
+);
+export type MergeCommandsConfig = z.infer<typeof MergeCommandsConfig>;
+
+export const StageCommandStage = z.enum([
+  "in_progress",
+  "ai_review",
+  "merging",
+  "stuck",
+]);
+export type StageCommandStage = z.infer<typeof StageCommandStage>;
+export type StageCommandPhase = "pre" | "post";
+
+export const StageCommand = z.object({
+  pre: ShellCommand.default(null),
+  post: ShellCommand.default(null),
+});
+export type StageCommand = z.infer<typeof StageCommand>;
+
+export const StageCommandsConfig = z.object({
+  in_progress: StageCommand.default({}),
+  ai_review: StageCommand.default({}),
+  merging: StageCommand.default({}),
+  stuck: StageCommand.default({}),
+});
+export type StageCommandsConfig = z.infer<typeof StageCommandsConfig>;
+
+export const CommandsConfig = z.object({
+  merge: MergeCommandsConfig,
+  stages: StageCommandsConfig.default({}),
+});
+export type CommandsConfig = z.infer<typeof CommandsConfig>;
+
+export const NotificationEvent = z.enum([
+  "card_stuck",
+  "review_requested",
+  "review_passed",
+  "review_rejected",
+  "merge_started",
+  "merge_failed",
+  "merge_done",
+  "helper_crashed",
+  "card_cancelled",
+]);
+export type NotificationEvent = z.infer<typeof NotificationEvent>;
+
+export const NotificationsConfig = z.object({
+  events: z.array(NotificationEvent).default([]),
+});
+export type NotificationsConfig = z.infer<typeof NotificationsConfig>;
+
+export const FilesConfig = z.object({
+  hidden_names: z
+    .array(z.string().min(1).max(160))
+    .default(["node_modules", ".git", ".next", "dist", "build", "out"]),
+});
+export type FilesConfig = z.infer<typeof FilesConfig>;
+
+export const AuthConfig = z.object({
+  bare_enabled: z.boolean().default(false),
+  /** Derived server-side: true when ANTHROPIC_API_KEY is configured. */
+  bare_available: z.boolean().optional(),
+});
+export type AuthConfig = z.infer<typeof AuthConfig>;
+
 export const BoardConfig = z.object({
+  version: z.number().int().positive().default(2),
   auto_review: z.boolean().default(false),
   concurrency_limit: z.number().int().positive().default(8),
   /**
@@ -239,6 +438,11 @@ export const BoardConfig = z.object({
    * vars are configured. UI uses this to show whether Telegram CAN send.
    */
   telegram_configured: z.boolean().optional(),
+  /**
+   * Derived (server-side, not persisted): true iff SECRET_KEY is present in
+   * the runtime env, enabling encrypted role secret env creation.
+   */
+  secret_store_configured: z.boolean().optional(),
   /**
    * When true, the dispatcher loop skips ALL spawn rounds (worker, reviewer,
    * merger). Currently-running helpers continue until natural completion — we
@@ -256,34 +460,19 @@ export const BoardConfig = z.object({
    */
   default_scope: z.string().nullable().optional().default(null),
   /**
-   * Optional shell command run by the Merger AFTER `pnpm build` succeeds
-   * but BEFORE the merge is finalized (push + MERGED:). Stored verbatim;
-   * the dispatcher passes it to the merger via the env var
-   * `BOARD_MERGER_POST_BUILD_CMD`. Empty / null = no extra step.
-   *
-   * Semantics (see prompts/merger.md):
-   *   - Runs as `bash -lc "$BOARD_MERGER_POST_BUILD_CMD"` with PWD =
-   *     repo root (or the scope-narrowed cwd, same as the rest of the
-   *     merger run).
-   *   - Non-zero exit triggers a single self-fix pass; if still failing
-   *     the merger reverts (pre-push) and emits `STUCK:`.
-   */
-  merger_post_build_command: z.string().nullable().default(null),
-  /**
-   * Project-relative directory the post-build command is run from. null /
-   * empty = repo root (BOARD_ROOT). Same shape as `Scope.cwd` — the
-   * server stores it relative to BOARD_ROOT and resolves on each spawn.
-   * Useful when the command is package-local (e.g. `vercel --prod` from
-   * `design-system/`).
-   */
-  merger_post_build_cwd: z.string().nullable().default(null),
-  /**
    * Max concurrent live `claude` processes for Composer threads. Soft
    * limit — threads themselves can exist without a process running
    * (idle/spun-down). When over the limit, the server queues the next
    * spawn until a slot frees. Default 3 keeps token spend bounded.
    */
   composer_concurrency: z.number().int().positive().default(3),
+  git: GitConfig.default({}),
+  commands: CommandsConfig.default({}),
+  roles: RolesConfig.default({}),
+  environment: EnvironmentConfig.default({}),
+  auth: AuthConfig.default({}),
+  notifications: NotificationsConfig.default({}),
+  files: FilesConfig.default({}),
 });
 export type BoardConfig = z.infer<typeof BoardConfig>;
 

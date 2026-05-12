@@ -228,8 +228,8 @@ export function ComposerChatView({ threadId }: Props) {
     // ends up squashed in the left third of the modal.
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       {/* Header */}
-      <header className="flex shrink-0 items-center gap-3 border-b border-black/5 px-4 py-2.5">
-        <Sparkles className="h-4 w-4 shrink-0 text-violet-500" />
+      <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
+        <Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
         <div className="min-w-0 flex-1">
           {/* Draft mode: title is just a hint until first send creates the
               thread. No edit affordance — there's nothing to PATCH yet. */}
@@ -257,13 +257,13 @@ export function ComposerChatView({ threadId }: Props) {
                   setEditingTitle(false);
                 }
               }}
-              className="w-full rounded border border-ink/30 bg-white px-1.5 py-0.5 text-[13.5px] font-semibold focus:border-ink focus:outline-none"
+              className="w-full rounded border border-ink/30 bg-surface px-1.5 py-0.5 text-[13.5px] font-semibold focus:border-ink focus:outline-none"
             />
           ) : (
             <button
               type="button"
               onClick={() => setEditingTitle(true)}
-              className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[13.5px] font-semibold text-ink hover:bg-black/5"
+              className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[13.5px] font-semibold text-ink hover:bg-surface-muted"
               title="Click to rename"
             >
               {active?.title || "(untitled thread)"}
@@ -303,7 +303,7 @@ export function ComposerChatView({ threadId }: Props) {
         {/* Status pill */}
         <span
           className={clsx(
-            "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[10.5px] font-medium ring-1 ring-inset ring-black/5",
+            "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[10.5px] font-medium ring-1 ring-inset ring-border",
             statusStyle.text,
           )}
           title={`Process status: ${statusStyle.label}`}
@@ -337,7 +337,7 @@ export function ComposerChatView({ threadId }: Props) {
               type="button"
               onClick={onSavePlan}
               disabled={status === "awaiting"}
-              className="inline-flex items-center gap-1 rounded border border-violet-200 bg-violet-50 px-2 py-1 text-[11.5px] font-medium text-violet-800 hover:bg-violet-100 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11.5px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
               title="Ask the AI to save this as a plan document"
             >
               <Save className="h-3.5 w-3.5" /> Save plan
@@ -427,7 +427,7 @@ export function ComposerChatView({ threadId }: Props) {
           </div>
 
           {/* Footer / input */}
-          <div className="shrink-0 border-t border-black/5 bg-white px-4 py-2.5">
+          <div className="shrink-0 border-t border-border bg-surface px-4 py-2.5">
             {status === "error" && (
               <div className="mb-2 flex items-center gap-1.5 rounded bg-red-50 px-2 py-1 text-[11.5px] text-red-800 ring-1 ring-inset ring-red-200">
                 <AlertCircle className="h-3.5 w-3.5" />
@@ -458,7 +458,7 @@ function fmtTok(n: number): string {
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-2 text-[11.5px] text-ink-subtle">
-      <div className="flex items-center gap-1 rounded-lg bg-white px-3 py-2 ring-1 ring-inset ring-black/5">
+      <div className="flex items-center gap-1 rounded-lg bg-surface px-3 py-2 ring-1 ring-inset ring-border">
         <span
           className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-ink-subtle"
           style={{ animationDelay: "0ms" }}

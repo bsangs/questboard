@@ -265,7 +265,7 @@ export interface UseAttachableTextareaOpts {
  *   - {fileInputProps}: props to spread onto a hidden `<input type=file>`
  */
 export function useAttachableTextarea(
-  textareaRef: RefObject<HTMLTextAreaElement>,
+  textareaRef: RefObject<HTMLTextAreaElement | null>,
   opts: UseAttachableTextareaOpts,
 ): {
   onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -273,7 +273,7 @@ export function useAttachableTextarea(
   onDragOver: (e: React.DragEvent<HTMLTextAreaElement>) => void;
   pickFile: () => void;
   fileInputProps: {
-    ref: RefObject<HTMLInputElement>;
+    ref: RefObject<HTMLInputElement | null>;
     type: "file";
     accept: string;
     style: React.CSSProperties;

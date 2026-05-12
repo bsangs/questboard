@@ -74,6 +74,14 @@ export function workerBranchFor(cardId: string): string {
   return `worker/card-${cardId}`;
 }
 
+async function configuredBaseBranch(): Promise<string> {
+  try {
+    return (await import("./config.js")).getConfig().git.base_branch;
+  } catch {
+    return env.BOARD_BASE_BRANCH ?? "main";
+  }
+}
+
 /** `git fetch origin <branch>` (or all). */
 export async function fetchOrigin(branch?: string): Promise<void> {
   const args = ["fetch", "origin"];
@@ -199,12 +207,12 @@ export async function diffMainTo(cardId: string): Promise<string> {
       // unrelated files. The merge-base anchors at the worker's actual
       // branch point, so the diff shows only the worker's own commits +
       // uncommitted edits.
-      const preferred = env.BOARD_BASE_BRANCH;
-      let baseRef = preferred ? `origin/${preferred}` : "origin/main";
+      const preferred = await configuredBaseBranch();
+      let baseRef = `origin/${preferred}`;
       try {
         await runGit(worktree, ["rev-parse", "--verify", "--quiet", baseRef]);
       } catch {
-        baseRef = preferred ?? "main";
+        baseRef = preferred;
       }
       const base = (
         await runGit(worktree, ["merge-base", baseRef, "HEAD"])
@@ -222,12 +230,12 @@ export async function diffMainTo(cardId: string): Promise<string> {
   } catch {
     /* offline or branch missing remotely — fall through to local */
   }
-  const preferred = env.BOARD_BASE_BRANCH;
-  let baseRef = preferred ? `origin/${preferred}` : "origin/main";
+  const preferred = await configuredBaseBranch();
+  let baseRef = `origin/${preferred}`;
   try {
     await gitMain(["rev-parse", "--verify", "--quiet", baseRef]);
   } catch {
-    baseRef = preferred ?? "main";
+    baseRef = preferred;
   }
   for (const ref of [`origin/${branch}`, branch]) {
     try {

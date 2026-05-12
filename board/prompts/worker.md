@@ -23,13 +23,10 @@ The server pre-injects the following sections into your spawn message. You do no
 - `$BOARD_SERVER_URL` — REST API base
 - `$CARD_ID` — the card you must execute
 - `$ATTEMPT` — `1` if first spawn, `>1` if resuming after stuck
-- `$BOARD_INSTALL_CMD` / `$BOARD_TEST_CMD` / `$BOARD_BUILD_CMD` /
-  `$BOARD_TYPECHECK_CMD` — this project's commands. Use them as-is; do
-  not rediscover from `package.json`.
 
 # Bootstrap
 
-The server has already created your worktree, fetched origin, claimed the card, and run install before spawning you. Your CWD is already the worktree root (`.questboard/worktrees/card-$CARD_ID/`) with the WIP branch (`worker/card-$CARD_ID`) checked out. You do not need to install dependencies again.
+The server has already created your worktree, fetched origin, claimed the card, and run any configured worker pre-hook before spawning you. Your CWD is already the worktree root (`.questboard/worktrees/card-$CARD_ID/`) with the WIP branch (`worker/card-$CARD_ID`) checked out.
 
 # Execution
 
@@ -61,26 +58,26 @@ When in doubt, LOCK. Stuck is a last resort. Excessive Stuck is a bug.
 
 Emit `STUCK: <one-line reason>` on its own line in your final assistant message, with the rest of the message as the human-facing question (in the card's `language`; include the options you considered and why you cannot decide as IC). The server commits any WIP, pushes, and handles the API transition. Do NOT run git or curl manually.
 
-# Verification gate (mandatory before requesting review)
+# Verification (mandatory before requesting review)
 
-1. Run typecheck: `$BOARD_TYPECHECK_CMD`. Must pass.
-2. Run tests: `$BOARD_TEST_CMD`. Must pass.
-3. Run the build: `$BOARD_BUILD_CMD`. For workspace monorepos, you may
-   filter to affected packages only. Must pass.
-4. If any of these fails: try to fix. Maximum 3 fix attempts. After the
-   4th failure → Stuck (`testing_failed`).
+1. Run the smallest project-appropriate checks needed for your change
+   (typecheck, tests, build, lint, or package-specific variants).
+2. Prefer commands already documented in this repo or visible in
+   `package.json`; do not invent unrelated checks.
+3. If any required check fails: try to fix. Maximum 3 fix attempts. After
+   the 4th failure → Stuck (`testing_failed`).
 
 # Sync + conflict resolution
 
-5. If a remote base branch exists, fetch and rebase onto it. Default is `origin/main`; projects may override the base branch via env.
-6. If no remote base branch exists, skip the sync step; local-only repos are supported.
-7. On conflict: resolve yourself. Re-run typecheck + tests + build. If
+4. If a remote base branch exists, fetch and rebase onto it. Default is `origin/main`; projects may override the base branch via env.
+5. If no remote base branch exists, skip the sync step; local-only repos are supported.
+6. On conflict: resolve yourself. Re-run relevant checks. If
    still failing → Stuck (`testing_failed`).
 
 # Finish
 
-8. Commit your changes on `worker/card-$CARD_ID`.
-9. Exit cleanly. The dispatcher pushes when an `origin` remote exists and then requests review.
+7. Commit your changes on `worker/card-$CARD_ID`.
+8. Exit cleanly. The dispatcher pushes when an `origin` remote exists and then requests review.
 
 # Final-message conventions
 

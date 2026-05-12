@@ -14,42 +14,47 @@ import { z } from "zod";
 import { getConfig, patchConfig } from "../config.js";
 import { sweepHumanReviewToAi } from "../transitions.js";
 import { broadcast } from "../sse.js";
-import { Scope, type Scope as ScopeT } from "@questboard/core";
+import {
+  AuthConfig,
+  CommandsConfig,
+  FilesConfig,
+  GitConfig,
+  NotificationsConfig,
+  RolesConfig,
+  EnvVarName,
+  EnvironmentConfig,
+  Scope,
+  type Scope as ScopeT,
+} from "@questboard/core";
 import { env } from "../env.js";
+import {
+  createSecret,
+  deleteSecret,
+  envSecretRef,
+  secretStoreConfigured,
+} from "../secrets.js";
 
 const ConfigPatch = z.object({
   auto_review: z.boolean().optional(),
   concurrency_limit: z.number().int().positive().optional(),
   telegram_enabled: z.boolean().optional(),
   dispatch_paused: z.boolean().optional(),
+  version: z.number().int().positive().optional(),
   default_language: z.string().min(2).max(3).optional(),
   scopes: z.array(Scope).optional(),
   default_scope: z.string().nullable().optional(),
-  // Empty string is normalized to null (no command) so the UI can clear
-  // the field by submitting "".
-  merger_post_build_command: z
-    .string()
-    .max(8_000)
-    .nullable()
-    .optional()
-    .transform((v) => {
-      if (v === undefined) return undefined;
-      if (v === null) return null;
-      const trimmed = v.trim();
-      return trimmed === "" ? null : v;
-    }),
-  // Validated against BOARD_ROOT below in the route handler the same way
-  // scope.cwd is. Empty string normalizes to null (= use repo root).
-  merger_post_build_cwd: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((v) => {
-      if (v === undefined) return undefined;
-      if (v === null) return null;
-      const trimmed = v.trim();
-      return trimmed === "" ? null : trimmed;
-    }),
+  git: GitConfig.optional(),
+  commands: CommandsConfig.optional(),
+  roles: RolesConfig.optional(),
+  environment: EnvironmentConfig.optional(),
+  auth: AuthConfig.optional(),
+  notifications: NotificationsConfig.optional(),
+  files: FilesConfig.optional(),
+});
+
+const EnvSecretCreate = z.object({
+  name: EnvVarName,
+  value: z.string().min(1).max(100_000),
 });
 
 /**
@@ -108,6 +113,10 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     reply.send(getConfig());
   });
 
+  app.get("/api/config/secret-store", async (_req, reply) => {
+    reply.send({ enabled: secretStoreConfigured() });
+  });
+
   app.post("/api/config", async (req, reply) => {
     try {
       const body = ConfigPatch.parse(req.body);
@@ -117,19 +126,6 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
           reply.code(400).send({ error: "bad_request", message: err });
           return;
         }
-      }
-      // Same path-resolve-and-validate-under-BOARD_ROOT logic as scope.cwd.
-      // Absolute paths from a folder picker get normalized to relative.
-      if (body.merger_post_build_cwd !== undefined) {
-        const r = normalizeScopeCwd(body.merger_post_build_cwd);
-        if (!r.ok) {
-          reply.code(400).send({
-            error: "bad_request",
-            message: `merger_post_build_cwd: ${r.error}`,
-          });
-          return;
-        }
-        body.merger_post_build_cwd = r.value;
       }
       const before = getConfig();
       const next = patchConfig(body);
@@ -155,5 +151,67 @@ export async function configRoutes(app: FastifyInstance): Promise<void> {
     if (next.auto_review) swept = await sweepHumanReviewToAi();
     broadcast({ type: "config_changed", config: next });
     reply.send({ auto_review: next.auto_review, swept_count: swept.length });
+  });
+
+  app.post("/api/config/secret-env", async (req, reply) => {
+    try {
+      if (!secretStoreConfigured()) {
+        reply.code(400).send({
+          error: "secret_store_disabled",
+          message: "SECRET_KEY is not configured.",
+        });
+        return;
+      }
+      const body = EnvSecretCreate.parse(req.body);
+      const cur = getConfig();
+      const existing = cur.environment.secret_env.find((item) => item.name === body.name);
+      if (existing) {
+        reply.code(409).send({
+          error: "secret_exists",
+          message: `Secret env already exists: ${body.name}`,
+        });
+        return;
+      }
+
+      const secret_ref = envSecretRef(body.name);
+      createSecret(secret_ref, body.value);
+      const environment = {
+        ...cur.environment,
+        secret_env: [
+          ...cur.environment.secret_env,
+          { name: body.name, secret_ref },
+        ],
+      };
+      const next = patchConfig({ environment });
+      broadcast({ type: "config_changed", config: next });
+      reply.send({ config: next });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        reply.code(400).send({ error: "bad_request", details: err.flatten() });
+        return;
+      }
+      reply.code(500).send({ error: "internal", message: (err as Error).message });
+    }
+  });
+
+  app.delete<{
+    Params: { name: string };
+  }>("/api/config/secret-env/:name", async (req, reply) => {
+    const name = EnvVarName.safeParse(req.params.name);
+    if (!name.success) {
+      reply.code(400).send({ error: "bad_request", message: "invalid name" });
+      return;
+    }
+
+    const cur = getConfig();
+    const item = cur.environment.secret_env.find((s) => s.name === name.data);
+    if (item) deleteSecret(item.secret_ref);
+    const environment = {
+      ...cur.environment,
+      secret_env: cur.environment.secret_env.filter((s) => s.name !== name.data),
+    };
+    const next = patchConfig({ environment });
+    broadcast({ type: "config_changed", config: next });
+    reply.send({ config: next });
   });
 }

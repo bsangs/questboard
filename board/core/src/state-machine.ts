@@ -51,13 +51,9 @@ export const TRANSITIONS: ReadonlyArray<Transition> = [
   // ones are actually legal for the card). See STUCK_TRANSITIONS below for the
   // single source of truth that the server / DnD / drawer all consult.
   //
-  // T-stuck-merging: stuck → merging (manual retry-post-build). Only valid
-  //   when the card's merged_sha is non-null — re-run the user-configured
-  //   post-build command without re-spawning a worker.
-  { id: "T-stuck-merging", from: "stuck", to: "merging", trigger: "human" },
   // T-stuck-done: stuck → done (force). Also only valid when merged_sha is
   //   non-null — the worker's code IS already on origin/main; the user is
-  //   explicitly accepting that the post-build/deploy step won't pass.
+  //   explicitly accepting the already-merged work as complete.
   { id: "T-stuck-done", from: "stuck", to: "done", trigger: "human" },
   // T-done-cancelled: limited reopen escape from done. Cancels tracking; does
   //   NOT revert the merge. Used when work shipped but the card itself was
@@ -116,17 +112,13 @@ export function isServerAutoTransition(t: Transition): boolean {
 //     another swing. (Retains current behavior.)
 //
 //   merged_sha != null →
-//     The worker's code IS on origin/main; only a downstream step (post-
-//     build, deploy gate, vercel push, …) failed. Sending this card back to
-//     `ready` would re-spawn a worker on already-merged work → conflict /
-//     no-op / data loss. Allowed recoveries instead are:
-//       - retry the post-build (stuck → merging, server runs the configured
-//         shell command again), or
-//       - force the card to done (stuck → done, user's manual override —
-//         e.g. "I deployed by hand").
+//     The worker's code IS on origin/main. Sending this card back to `ready`
+//     would re-spawn a worker on already-merged work → conflict / no-op /
+//     data loss. The only recovery is force done (stuck → done, user's
+//     manual override).
 //
 // This table is consulted by:
-//   - server route handlers (force-done / retry-post-build endpoints)
+//   - server route handlers (force-done endpoint)
 //   - server transitions.ts (ensureCanStuckTransition)
 //   - UI Board.tsx (computeStuckTargets — drives DnD ALLOWED_DROPS)
 //   - UI CardDrawer.tsx (status select options)
@@ -143,8 +135,8 @@ export interface StuckTransitionPolicy {
 export const STUCK_TRANSITIONS: StuckTransitionPolicy = {
   withoutMergedSha: ["ready"],
   // Note: NOT "ready" — re-queueing would re-spawn a worker on already-merged
-  // work. The user must either retry the post-build or accept it as done.
-  withMergedSha: ["merging", "done"],
+  // work. The user can only accept it as done.
+  withMergedSha: ["done"],
 };
 
 /**

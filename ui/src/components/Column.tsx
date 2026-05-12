@@ -5,20 +5,22 @@ import clsx from "clsx";
 import { ChevronDown, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CardTile } from "./CardTile";
+import { StatusDot, type StatusDotTone } from "./patterns";
+import { Button, EmptyState } from "./ui";
 import { useBoard } from "@/lib/state";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { CardStatus, CardSummary } from "@/lib/types";
 
-const COLUMN_ACCENT: Record<CardStatus, string> = {
-  backlog: "bg-gray-300",
-  ready: "bg-blue-400",
-  in_progress: "bg-emerald-400",
-  stuck: "bg-amber-400",
-  human_review: "bg-violet-400",
-  ai_review: "bg-fuchsia-400",
-  merging: "bg-blue-500",
-  done: "bg-emerald-500",
-  cancelled: "bg-gray-300",
+const COLUMN_ACCENT: Record<CardStatus, StatusDotTone> = {
+  backlog: "neutral",
+  ready: "blue",
+  in_progress: "green",
+  stuck: "amber",
+  human_review: "amber",
+  ai_review: "green",
+  merging: "blue",
+  done: "green",
+  cancelled: "neutral",
 };
 
 const EMPTY_MSG: Partial<Record<CardStatus, string>> = {
@@ -99,14 +101,11 @@ export function Column({
 
   const headerLabel = (
     <>
-      <span
-        className={clsx("h-1.5 w-1.5 rounded-full", COLUMN_ACCENT[status])}
-        aria-hidden
-      />
-      <h2 className="text-[12.5px] font-semibold uppercase tracking-wide text-ink-muted">
+      <StatusDot tone={COLUMN_ACCENT[status]} />
+      <h2 className="text-[12.5px] font-semibold uppercase text-ink-muted">
         {label}
       </h2>
-      <span className="ml-1 rounded bg-white px-1.5 py-0.5 font-mono text-[10.5px] text-ink-subtle ring-1 ring-inset ring-black/5">
+      <span className="ml-1 rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10.5px] text-ink-subtle ring-1 ring-inset ring-border">
         {cards.length}
       </span>
     </>
@@ -116,12 +115,12 @@ export function Column({
     <div
       ref={setNodeRef}
       className={clsx(
-        "flex shrink-0 flex-col rounded-lg bg-[var(--bg-muted)] transition-colors duration-200",
+        "flex shrink-0 flex-col rounded-md border border-border bg-surface-muted transition-colors duration-200",
         // Mobile: full-width stacked sections with auto height.
         // Desktop: fixed 280px column, full available height.
         "w-full md:h-full md:w-[280px]",
         isDragging && !droppable && "opacity-40",
-        isOver && droppable && "ring-2 ring-blue-400/70 ring-offset-2 ring-offset-white",
+        isOver && droppable && "ring-2 ring-[var(--focus)] ring-offset-2 ring-offset-bg",
       )}
     >
       {/* Header — clickable on mobile (toggles collapse), static on desktop */}
@@ -129,7 +128,7 @@ export function Column({
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}
-          className="sticky top-0 z-[1] flex min-h-[44px] w-full items-center gap-2 rounded-t-lg bg-[var(--bg-muted)] px-3 py-2.5 text-left"
+          className="sticky top-0 z-[1] flex min-h-[44px] w-full items-center gap-2 rounded-t-md bg-surface-muted px-3 py-2.5 text-left"
           aria-expanded={!collapsed}
           aria-controls={`column-body-${status}`}
         >
@@ -154,40 +153,36 @@ export function Column({
         >
           {showDoneHint && (
             <div
-              className="rounded-md border border-blue-100 bg-blue-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-blue-800"
+              className="rounded-md border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-emerald-800"
               role="note"
             >
-              <kbd className="rounded border border-blue-200 bg-white px-1 py-px font-mono text-[10.5px] text-blue-900">
+              <kbd className="rounded border border-emerald-200 bg-surface px-1 py-px font-mono text-[10.5px] text-emerald-900">
                 {modKey}
               </kbd>
               -click to multi-select for archive
             </div>
           )}
           {cards.length === 0 ? (
-            <div className="flex h-24 items-center justify-center px-3 text-center text-[12px] text-ink-subtle">
+            <EmptyState>
               {EMPTY_MSG[status] ?? "—"}
-            </div>
+            </EmptyState>
           ) : (
             cards.map((c) => (
               <CardTile key={c.id} card={c} draggable={draggable} />
             ))
           )}
           {showInlineNew && (
-            <button
+            <Button
               type="button"
               onClick={() => setNewCardOpen(true)}
-              className={clsx(
-                "flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-black/15 bg-transparent",
-                "px-3 py-2 text-[12px] font-medium text-ink-subtle",
-                "min-h-[44px] md:min-h-0",
-                "transition-colors hover:border-black/30 hover:bg-white hover:text-ink-muted",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50",
-              )}
+              variant="ghost"
+              size="md"
+              className="min-h-[44px] w-full border-dashed border-border-strong md:min-h-0"
               aria-label="New card"
+              icon={<Plus className="h-3.5 w-3.5" />}
             >
-              <Plus className="h-3.5 w-3.5" />
               New
-            </button>
+            </Button>
           )}
         </div>
       )}

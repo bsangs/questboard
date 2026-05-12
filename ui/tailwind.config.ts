@@ -6,15 +6,17 @@ const config: Config = {
     extend: {
       fontFamily: {
         sans: [
+          "Geist",
+          "Satoshi",
+          '"Cabinet Grotesk"',
           "-apple-system",
           "BlinkMacSystemFont",
           '"Segoe UI"',
-          "Roboto",
-          '"Helvetica Neue"',
-          "Arial",
           "sans-serif",
         ],
         mono: [
+          '"Geist Mono"',
+          '"JetBrains Mono"',
           "ui-monospace",
           "SFMono-Regular",
           '"SF Mono"',
@@ -25,18 +27,39 @@ const config: Config = {
         ],
       },
       colors: {
-        // Notion-like neutrals; semantic accents.
+        // Semantic product tokens. Keep feature components on these names
+        // instead of raw grays so theme updates stay centralized.
+        bg: "var(--bg)",
+        surface: {
+          DEFAULT: "var(--surface)",
+          muted: "var(--surface-muted)",
+          raised: "var(--surface-raised)",
+          selected: "var(--surface-selected)",
+        },
+        border: {
+          DEFAULT: "var(--border)",
+          strong: "var(--border-strong)",
+        },
+        accent: {
+          DEFAULT: "var(--accent)",
+          strong: "var(--accent-strong)",
+          soft: "var(--accent-soft)",
+        },
         ink: {
-          DEFAULT: "#37352f",
-          muted: "#787774",
-          subtle: "#9b9a97",
+          DEFAULT: "var(--text)",
+          muted: "var(--text-muted)",
+          subtle: "var(--text-subtle)",
         },
       },
+      borderRadius: {
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+      },
       boxShadow: {
-        tile: "0 1px 0 rgba(15,15,15,0.04), 0 0 0 1px rgba(15,15,15,0.04)",
-        tileHover:
-          "0 2px 4px rgba(15,15,15,0.08), 0 0 0 1px rgba(15,15,15,0.08)",
-        drawer: "-8px 0 24px rgba(15,15,15,0.08)",
+        tile: "var(--shadow-card)",
+        tileHover: "var(--shadow-card-hover)",
+        popover: "var(--shadow-popover)",
+        drawer: "-18px 0 48px rgba(15,23,42,0.14)",
       },
       keyframes: {
         pulseDot: {

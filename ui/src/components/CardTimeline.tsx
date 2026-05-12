@@ -168,7 +168,7 @@ const CLASS_LABEL: Record<PostBuildAttempt["classification"], string> = {
 
 const STAGE_TONE: Record<CardStage["role"], string> = {
   worker: "text-emerald-700",
-  reviewer: "text-violet-700",
+  reviewer: "text-amber-700",
   merger: "text-blue-700",
 };
 
@@ -288,10 +288,10 @@ export function CardTimeline({
       {groups.map((g, i) => (
         <li
           key={`${i}-${g.startedAt}`}
-          className="rounded-md border border-black/5 bg-white"
+          className="rounded-md border border-border bg-surface"
         >
-          <div className="flex items-baseline justify-between border-b border-black/5 px-3 py-1.5">
-            <span className="text-[11.5px] font-semibold uppercase tracking-wide text-ink">
+          <div className="flex items-baseline justify-between border-b border-border px-3 py-1.5">
+            <span className="text-[11.5px] font-semibold uppercase text-ink">
               {g.label}
             </span>
             <span className="font-mono text-[11px] text-ink-subtle">

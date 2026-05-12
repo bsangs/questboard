@@ -21,6 +21,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  rmSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -53,6 +54,21 @@ interface ChildSpec {
   command: string;
   args: string[];
   cwd: string;
+}
+
+function collectStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") {
+    out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, out);
+    return out;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectStrings(item, out);
+  }
+  return out;
 }
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -190,6 +206,82 @@ function resolveNextBin(appRoot: string): string | null {
   return null;
 }
 
+function readJsonFile(path: string): unknown | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function missingUiBuildFiles(uiCwd: string): string[] {
+  const nextDir = join(uiCwd, ".next");
+  const required = [
+    "BUILD_ID",
+    "build-manifest.json",
+    "routes-manifest.json",
+    "server/next-font-manifest.json",
+    "server/pages-manifest.json",
+  ];
+  const missing = required.filter((file) => !existsSync(join(nextDir, file)));
+
+  for (const manifestName of ["build-manifest.json", "app-build-manifest.json"]) {
+    const manifest = readJsonFile(join(nextDir, manifestName));
+    if (!manifest) continue;
+    const refs = collectStrings(manifest).filter((ref) =>
+      /^static\/.+\.(js|css)$/.test(ref),
+    );
+    for (const ref of refs) {
+      if (!existsSync(join(nextDir, ref))) missing.push(ref);
+    }
+  }
+
+  return Array.from(new Set(missing));
+}
+
+function canRebuildUi(uiCwd: string): boolean {
+  return (
+    existsSync(join(uiCwd, "src")) ||
+    existsSync(join(uiCwd, "app")) ||
+    existsSync(join(uiCwd, "pages"))
+  );
+}
+
+function ensureUiBuild(uiCwd: string, uiBin: string, env: NodeJS.ProcessEnv): void {
+  const missing = missingUiBuildFiles(uiCwd);
+  if (missing.length === 0) return;
+
+  if (!canRebuildUi(uiCwd)) {
+    process.stderr.write(
+      "questboard: packaged UI build is incomplete or stale.\n" +
+        missing.slice(0, 8).map((file) => `  - missing ${file}`).join("\n") +
+        "\n  Reinstall or upgrade questboard so the package includes a clean UI build.\n",
+    );
+    process.exit(1);
+    return;
+  }
+
+  process.stdout.write(
+    "questboard: UI build cache is stale; rebuilding it once before start.\n",
+  );
+  rmSync(join(uiCwd, ".next"), { recursive: true, force: true });
+  execFileSync(process.execPath, [uiBin, "build"], {
+    cwd: uiCwd,
+    env,
+    stdio: "inherit",
+  });
+
+  const stillMissing = missingUiBuildFiles(uiCwd);
+  if (stillMissing.length > 0) {
+    process.stderr.write(
+      "questboard: UI build is still incomplete after rebuild.\n" +
+        stillMissing.slice(0, 8).map((file) => `  - missing ${file}`).join("\n") +
+        "\n",
+    );
+    process.exit(1);
+  }
+}
+
 function streamLines(
   source: NodeJS.ReadableStream | null,
   role: Role,
@@ -274,6 +366,9 @@ export async function cmdStart(opts: CmdStartOptions): Promise<void> {
     );
     process.exit(1);
     return;
+  }
+  if (wantUi && uiBin != null) {
+    ensureUiBuild(uiCwd, uiBin, mergedEnv);
   }
 
   const specs: ChildSpec[] = [];

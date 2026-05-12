@@ -36,9 +36,7 @@ import {
   mergerComplete,
   mergerFailed,
   requeueCard,
-  retryPostBuild,
   forceDoneFromStuck,
-  stopPostBuild,
   transitionBacklogToReady,
   moveToBacklog,
   transitionToAiReview,
@@ -174,7 +172,6 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
       // the "blocked by #NNNN" chip — without it the chip is permanently
       // dark even when the dispatcher correctly refuses to spawn.
       const { deps: depsMap, blockedBy: blockedMap } = listAllDepsAndBlocked();
-      const { isPostBuildActive } = await import("../post-build.js");
       reply.send({
         total: rows.length,
         cards: slice.map((r) => ({
@@ -197,9 +194,6 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
           // through to summaries so the UI doesn't have to fetch the full
           // card to decide which targets are valid.
           merged_sha: r.merged_sha ?? null,
-          // True iff there's a live post-build process for this card.
-          // Drives the "Stop post-build" affordance + retry-disabled pill.
-          post_build_active: isPostBuildActive(r.id),
           comment_count: r.comment_count ?? 0,
           worker_input_tokens: r.worker_input_tokens ?? 0,
           worker_output_tokens: r.worker_output_tokens ?? 0,
@@ -492,12 +486,11 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
 
   // ── Server-side fast-forward merge pre-attempt ──────────────────────────
   // Called by the dispatcher BEFORE it would otherwise spawn the Claude
-  // merger. Tries `git merge --ff-only origin/<wip_branch>` directly; on
-  // success runs install (only if the lockfile changed) + the discovered
-  // typecheck/build/test gates, then pushes and routes the card through
-  // the same `mergerComplete` path the spawn-merger flow uses. Mergers
-  // are strictly serial — the module owns its own in-process mutex, the
-  // dispatcher's own gate is the SQL workers row.
+  // merger. Runs the configured fast-forward merge path; on success it
+  // pushes and routes the card through the same `mergerComplete` path the
+  // spawn-merger flow uses. Mergers are strictly serial — the module owns
+  // its own in-process mutex, and the dispatcher also checks the SQL
+  // workers row.
   //
   // Returns:
   //   { ok: true, merged_sha, status, ran }
@@ -579,31 +572,9 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // ── Stuck-with-merged_sha recovery endpoints ─────────────────────────────
-  // Each one targets a card that's stuck with merged_sha set — i.e. the
-  // worker's code IS already on origin/main but a downstream step (post-
-  // build, deploy gate) failed. See state-machine STUCK_TRANSITIONS for
-  // why we forbid the usual stuck → ready route in this case.
-
-  // Manual retry of the configured post-build command. Flips status back
-  // to merging and runs the bash command again; the runner's classifier +
-  // auto-retry pipeline takes over from there.
-  app.post("/api/cards/:id/retry-post-build", async (req, reply) => {
-    try {
-      const { id } = CardIdParam.parse(req.params);
-      const card = await retryPostBuild(id);
-      reply.send({
-        status: card.frontmatter.status,
-        merged_sha: card.frontmatter.merged_sha,
-      });
-    } catch (err) {
-      handleError(err, reply);
-    }
-  });
-
-  // User declares the card done despite the failed post-build — common
-  // when they deployed by hand or accept a one-off flake. merged_sha is
-  // preserved for audit. Body.reason becomes a `note` comment.
+  // ── Stuck-with-merged_sha recovery endpoint ──────────────────────────────
+  // User declares the already-merged card done. merged_sha is preserved for
+  // audit. Body.reason becomes a `note` comment.
   app.post("/api/cards/:id/force-done", async (req, reply) => {
     try {
       const { id } = CardIdParam.parse(req.params);
@@ -615,26 +586,6 @@ export async function cardsRoutes(app: FastifyInstance): Promise<void> {
         status: card.frontmatter.status,
         merged_sha: card.frontmatter.merged_sha,
       });
-    } catch (err) {
-      handleError(err, reply);
-    }
-  });
-
-  // SIGTERM the active post-build for a card. The runner's exit handler
-  // will land the card in stuck (testing_failed) once the process is
-  // reaped. Returns 409 if there's nothing running.
-  app.post("/api/cards/:id/stop-post-build", async (req, reply) => {
-    try {
-      const { id } = CardIdParam.parse(req.params);
-      const pid = await stopPostBuild(id);
-      if (pid == null) {
-        reply.code(409).send({
-          error: "post_build_inactive",
-          message: "no active post-build for this card",
-        });
-        return;
-      }
-      reply.send({ ok: true, killed_pid: pid });
     } catch (err) {
       handleError(err, reply);
     }

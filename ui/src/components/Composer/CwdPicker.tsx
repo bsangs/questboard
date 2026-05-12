@@ -80,8 +80,8 @@ export function CwdPicker({ onClose }: Props) {
   };
 
   return (
-    <div className="w-72 rounded-md border border-black/10 bg-white p-3 shadow-lg">
-      <div className="mb-1 text-[11.5px] font-medium uppercase tracking-wide text-ink-subtle">
+    <div className="w-72 rounded-md border border-border-strong bg-surface p-3 shadow-lg">
+      <div className="mb-1 text-[11.5px] font-medium uppercase text-ink-subtle">
         Working directory
       </div>
       <p className="mb-2 text-[11px] text-ink-subtle">
@@ -97,13 +97,13 @@ export function CwdPicker({ onClose }: Props) {
             if (e.key === "Enter") submit();
             if (e.key === "Escape") onClose();
           }}
-          className="min-w-0 flex-1 rounded border border-black/10 px-2 py-1 font-mono text-[12px] focus:border-ink focus:outline-none"
+          className="min-w-0 flex-1 rounded border border-border-strong px-2 py-1 font-mono text-[12px] focus:border-ink focus:outline-none"
         />
         <button
           onClick={onPick}
           aria-label="Pick folder"
           title="Pick folder"
-          className="shrink-0 rounded border border-black/10 px-1.5 py-1 text-ink-muted hover:bg-black/5"
+          className="shrink-0 rounded border border-border-strong px-1.5 py-1 text-ink-muted hover:bg-surface-muted"
         >
           <Folder className="h-3.5 w-3.5" />
         </button>
@@ -111,13 +111,13 @@ export function CwdPicker({ onClose }: Props) {
       <div className="mt-2 flex items-center justify-end gap-1.5">
         <button
           onClick={onClose}
-          className="rounded px-2 py-1 text-[11.5px] text-ink-muted hover:bg-black/5"
+          className="rounded px-2 py-1 text-[11.5px] text-ink-muted hover:bg-surface-muted"
         >
           Cancel
         </button>
         <button
           onClick={submit}
-          className="rounded bg-ink px-2.5 py-1 text-[11.5px] font-medium text-white hover:bg-black"
+          className="rounded bg-ink px-2.5 py-1 text-[11.5px] font-medium text-white hover:bg-slate-900"
         >
           Open →
         </button>

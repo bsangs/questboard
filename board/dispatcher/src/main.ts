@@ -30,6 +30,7 @@ import {
   nextWorkerRevivable,
 } from "./queue.js";
 import { attachExitHandler } from "./exit.js";
+import { readBaseBranch } from "./context.js";
 import { HeartbeatWatchdog } from "./heartbeat.js";
 import { StatsReporter } from "./stats.js";
 import { reapOrphans } from "./recovery.js";
@@ -198,7 +199,7 @@ async function trySpawnRound(reason: string): Promise<void> {
       try {
         const worker = await spawnWorker(card, cfg);
         active.set(card.id, worker);
-        attachExitHandler(worker, { api, logger, active, baseBranch: cfg.baseBranch });
+        attachExitHandler(worker, { api, logger, active, baseBranch: readBaseBranch(cfg), cfg });
         logger.log({
           event: "worker_spawned",
           card_id: card.id,
@@ -237,7 +238,7 @@ async function trySpawnRound(reason: string): Promise<void> {
         try {
           const reviewer = await spawnReviewer(card, cfg);
           active.set(card.id, reviewer);
-          attachExitHandler(reviewer, { api, logger, active, baseBranch: cfg.baseBranch });
+          attachExitHandler(reviewer, { api, logger, active, baseBranch: readBaseBranch(cfg), cfg });
           logger.log({
             event: "reviewer_spawned",
             card_id: card.id,
@@ -275,11 +276,11 @@ async function trySpawnRound(reason: string): Promise<void> {
     // guaranteed to lose — better to never start the second.
     //
     // For each candidate, we first try the server-side ff-merge fast
-    // path (#4 BIG WIN): on a clean fast-forward + green install/build,
-    // the server pushes and transitions the card directly, no merger
-    // process needed. If ff isn't possible (history diverged, gate
-    // failed, etc.) the server signals `fallback_to_merger=true` and we
-    // spawn the regular Claude merger to handle conflicts.
+    // path: on a clean fast-forward, the server pushes and transitions the
+    // card directly, no merger process needed. If ff isn't possible
+    // (history diverged, configured command failed, etc.) the server signals
+    // `fallback_to_merger=true` and we spawn the regular Claude merger to
+    // handle conflicts.
     //
     // The ff attempt is fire-and-forget here so trySpawnRound's mutex
     // doesn't get held for the duration of a build. We track it in
@@ -348,7 +349,7 @@ async function trySpawnRound(reason: string): Promise<void> {
           try {
             const merger = await spawnMerger(card, cfg);
             active.set(card.id, merger);
-            attachExitHandler(merger, { api, logger, active, baseBranch: cfg.baseBranch });
+            attachExitHandler(merger, { api, logger, active, baseBranch: readBaseBranch(cfg), cfg });
             logger.log({
               event: "merger_spawned",
               card_id: card.id,

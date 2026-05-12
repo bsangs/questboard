@@ -16,6 +16,7 @@ import clsx from "clsx";
 import { Menu, Plus, Search, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useBoard } from "@/lib/state";
+import { Button, IconButton, Input } from "@/components/ui";
 import { ComposerThreadList } from "./ThreadList";
 
 const SIDEBAR_KEY = "composer:sidebar-open";
@@ -76,24 +77,27 @@ export function ComposerSidebar({ asSheet, onClose }: Props) {
   // controls but no rail.
   if (asSheet) {
     return (
-      <aside className="flex h-full w-full flex-col border-b border-black/5 bg-white">
-        <div className="flex items-center gap-2 border-b border-black/5 px-3 py-2">
+      <aside className="flex h-full w-full flex-col border-b border-border bg-surface">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <h3 className="text-[13px] font-semibold">Threads</h3>
-          <button
+          <IconButton
             onClick={onClose}
-            aria-label="Close threads"
-            className="ml-auto rounded p-1 text-ink-subtle hover:bg-black/5"
+            label="Close threads"
+            size="xs"
+            className="ml-auto"
           >
             <X className="h-4 w-4" />
-          </button>
+          </IconButton>
         </div>
         <div className="flex flex-col gap-2 px-3 py-2">
-          <button
+          <Button
             onClick={handleNewThread}
-            className="inline-flex items-center justify-center gap-1.5 rounded-md bg-ink px-2.5 py-1.5 text-[12.5px] font-medium text-white hover:bg-black"
+            variant="primary"
+            size="sm"
+            icon={<Plus className="h-3.5 w-3.5" />}
           >
-            <Plus className="h-3.5 w-3.5" /> New thread
-          </button>
+            New thread
+          </Button>
           <SearchBox query={query} onChange={setQuery} />
         </div>
         <ComposerThreadList query={query} onSelected={onClose} />
@@ -106,20 +110,21 @@ export function ComposerSidebar({ asSheet, onClose }: Props) {
   return (
     <aside
       className={clsx(
-        "flex h-full shrink-0 flex-col border-r border-black/5 bg-[var(--bg-muted,#fafafa)] transition-[width] duration-150 ease-out",
+        "flex h-full shrink-0 flex-col border-r border-border bg-surface-muted transition-[width] duration-150 ease-out",
         open ? "w-[280px]" : "w-[44px]",
       )}
     >
       <div
         className={clsx(
-          "flex shrink-0 items-center border-b border-black/5",
+          "flex shrink-0 items-center border-b border-border",
           open ? "justify-between gap-2 px-3 py-2" : "justify-center py-2",
         )}
       >
-        <button
+        <IconButton
           onClick={toggle}
-          aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-          className="relative rounded p-1 text-ink-muted hover:bg-black/5"
+          label={open ? "Collapse sidebar" : "Expand sidebar"}
+          size="xs"
+          className="relative"
         >
           <Menu className="h-4 w-4" />
           {/* When collapsed, surface the count as a tiny badge so the
@@ -129,17 +134,17 @@ export function ComposerSidebar({ asSheet, onClose }: Props) {
               {threadCount > 99 ? "99+" : threadCount}
             </span>
           )}
-        </button>
+        </IconButton>
         {open && <h3 className="text-[12.5px] font-semibold">Threads</h3>}
         {open && (
-          <button
+          <IconButton
             onClick={handleNewThread}
-            aria-label="New thread"
+            label="New thread"
             title="New thread"
-            className="rounded p-1 text-ink-muted hover:bg-black/5"
+            size="xs"
           >
             <Plus className="h-4 w-4" />
-          </button>
+          </IconButton>
         )}
       </div>
 
@@ -167,11 +172,11 @@ function SearchBox({
   return (
     <div className="relative">
       <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-subtle" />
-      <input
+      <Input
         value={query}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Search threads…"
-        className="w-full rounded border border-black/10 bg-white py-1.5 pl-7 pr-2 text-[12px] focus:border-ink focus:outline-none"
+        className="pl-7 text-[12px]"
       />
     </div>
   );

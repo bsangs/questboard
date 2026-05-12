@@ -17,6 +17,7 @@ import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { ServerApi } from "./api.js";
+import type { DispatcherConfig } from "./config.js";
 import type { Logger } from "./logger.js";
 import {
   refreshLiveTokensFromTranscript,
@@ -35,6 +36,8 @@ import {
   extractStuckMarker,
   lastAssistantText,
 } from "./transcript.js";
+import { readHelperEnvironment } from "./context.js";
+import { runCommandHook } from "./util/hooks.js";
 
 const execFileP = promisify(execFile);
 
@@ -132,6 +135,12 @@ function helperAuthor(role: WorkerRole): "worker" | "reviewer" | "system" {
 
 function withMergerPrefix(role: WorkerRole, body: string): string {
   return role === "merger" ? `[merger] ${body}` : body;
+}
+
+function stageForRole(role: WorkerRole): "in_progress" | "ai_review" | "merging" {
+  if (role === "worker") return "in_progress";
+  if (role === "reviewer") return "ai_review";
+  return "merging";
 }
 
 function elapsedSecondsSince(iso: string): number {
@@ -334,6 +343,7 @@ export interface ExitHandlerDeps {
   logger: Logger;
   active: Map<string, SpawnedWorker>;
   baseBranch?: string | null;
+  cfg: DispatcherConfig;
 }
 
 export function attachExitHandler(worker: SpawnedWorker, deps: ExitHandlerDeps): void {
@@ -378,6 +388,31 @@ export function attachExitHandler(worker: SpawnedWorker, deps: ExitHandlerDeps):
         message: err instanceof Error ? err.message : String(err),
       });
     }
+
+    await runCommandHook({
+      cfg: deps.cfg,
+      stage: stageForRole(worker.role),
+      phase: "post",
+      cwd: worker.hookCwd,
+      env: {
+        ...process.env,
+        ...readHelperEnvironment(deps.cfg),
+        BOARD_ROOT: deps.cfg.boardRoot,
+        BOARD_SERVER_URL: deps.cfg.serverUrl,
+        BOARD_DATA: deps.cfg.boardData,
+        BOARD_WORKTREES: deps.cfg.worktreesDir,
+        CARD_ID: worker.cardId,
+        ATTEMPT: String(worker.attempt),
+        WIP_BRANCH: worker.wipBranch,
+        HELPER_PID: String(worker.pid),
+        EXIT_CODE: code == null ? "" : String(code),
+        EXIT_SIGNAL: signal ?? "",
+      },
+      cardId: worker.cardId,
+      attempt: worker.attempt,
+      wipBranch: worker.wipBranch,
+      log: (event) => logger.log(event),
+    });
 
     // Bookkeeping: tell the server the worker exited so workers row gets
     // dropped. Server's /exit no longer drives state transitions (we do).

@@ -104,7 +104,7 @@ export function ComposerModal() {
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-30 bg-black/40 animate-fadeIn" />
+        <Dialog.Overlay className="fixed inset-0 z-30 bg-slate-950/35 animate-fadeIn" />
         {/*
           Centering strategy: Dialog.Content is a viewport-filling flex
           container with `pointer-events-none`, and the actual modal box is
@@ -124,13 +124,13 @@ export function ComposerModal() {
           <Dialog.Title className="sr-only">Composer</Dialog.Title>
           <div
             className={clsx(
-              "pointer-events-auto flex flex-col overflow-hidden bg-white shadow-2xl animate-fadeIn",
+              "pointer-events-auto flex flex-col overflow-hidden bg-surface shadow-popover animate-fadeIn",
               isMobile
                 ? // Mobile: full screen
                   "h-full w-full"
                 : // Desktop: centered card sized normally; flex parent
                   // handles the centering.
-                  "h-[90vh] w-[min(1200px,95vw)] rounded-lg border border-black/10",
+                  "h-[90vh] w-[min(1200px,95vw)] rounded-md border border-border",
             )}
           >
           <div className="flex h-full min-h-0 flex-1">
@@ -139,12 +139,12 @@ export function ComposerModal() {
               {/* Chat header — hamburger (mobile sheet trigger) + close
                   button. Desktop uses just the close button; the sidebar
                   has its own collapse control. */}
-              <div className="flex shrink-0 items-center gap-2 border-b border-black/5 px-3 py-2">
+              <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
                 {isMobile && (
                   <button
                     onClick={() => setSheetOpen(true)}
                     aria-label="Show threads"
-                    className="rounded p-1 text-ink-muted hover:bg-black/5"
+                    className="rounded-md p-1 text-ink-muted hover:bg-surface-muted"
                   >
                     <Menu className="h-4 w-4" />
                   </button>
@@ -160,7 +160,7 @@ export function ComposerModal() {
                 <Dialog.Close asChild>
                   <button
                     aria-label="Close"
-                    className="ml-auto rounded p-1 text-ink-subtle hover:bg-black/5"
+                    className="ml-auto rounded-md p-1 text-ink-subtle hover:bg-surface-muted"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -193,7 +193,7 @@ export function ComposerModal() {
                     keep it inside the chat pane so it doesn't fight with
                     Radix's focus management on Dialog.Content. */}
                 {isMobile && sheetOpen && (
-                  <div className="absolute inset-0 z-10 flex flex-col bg-white">
+                  <div className="absolute inset-0 z-10 flex flex-col bg-surface">
                     <ComposerSidebar
                       asSheet
                       onClose={() => setSheetOpen(false)}

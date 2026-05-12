@@ -225,40 +225,16 @@ export const reopenCard = (id: string) =>
 export const cancelCard = (id: string, reason?: string) =>
   request(`/api/cards/${id}/cancel`, { method: "POST", json: { reason } });
 
-// ─── Stuck-with-merged_sha recovery (drawer actions) ────────────────────────
-
-/**
- * Manual retry of the user-configured post-build command. Card flips back
- * to `merging`; the server's runner classifies and retries from there.
- * 409 "no_merged_sha" / "no_post_build_cmd" / "post_build_active" if any
- * precondition fails.
- */
-export const retryPostBuild = (id: string) =>
-  request<{ status: "merging"; merged_sha: string }>(
-    `/api/cards/${id}/retry-post-build`,
-    { method: "POST" },
-  );
+// ─── Stuck-with-merged_sha recovery (drawer action) ─────────────────────────
 
 /**
  * Force a stuck-with-merged_sha card into `done` (user override). Body
- * `reason` is appended as a `note` comment for audit. 409 if there's an
- * active post-build (user must stop it first).
+ * `reason` is appended as a `note` comment for audit.
  */
 export const forceDoneCard = (id: string, reason?: string) =>
   request<{ status: "done"; merged_sha: string }>(
     `/api/cards/${id}/force-done`,
     { method: "POST", json: { reason } },
-  );
-
-/**
- * SIGTERM the active post-build for this card. The runner's exit handler
- * lands the card back in `stuck` (testing_failed). 409 if there's nothing
- * running for this card.
- */
-export const stopPostBuild = (id: string) =>
-  request<{ ok: true; killed_pid: number }>(
-    `/api/cards/${id}/stop-post-build`,
-    { method: "POST" },
   );
 
 export const restoreCard = (id: string) =>
@@ -311,6 +287,28 @@ export const toggleAutoReview = () =>
     { method: "POST" },
   );
 
+export const getSecretStoreStatus = (): Promise<{ enabled: boolean }> =>
+  request("/api/config/secret-store");
+
+export const createSecretEnv = async (input: {
+  name: string;
+  value: string;
+}): Promise<BoardConfig> => {
+  const res = await request<{ config: BoardConfig }>(
+    "/api/config/secret-env",
+    { method: "POST", json: input },
+  );
+  return res.config;
+};
+
+export const deleteSecretEnv = async (name: string): Promise<BoardConfig> => {
+  const res = await request<{ config: BoardConfig }>(
+    `/api/config/secret-env/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+  return res.config;
+};
+
 // ─── Stats ──────────────────────────────────────────────────────────────────
 
 export const getStats = (): Promise<BoardStats> => request("/api/stats");
@@ -347,6 +345,14 @@ export const pickFolder = (): Promise<
   | { cancelled: true }
   | { absolute: string; relative: string | null; boardRoot: string }
 > => request("/api/system/folder-pick");
+
+export const getGitBranches = (): Promise<{
+  current: string | null;
+  branches: string[];
+}> => request("/api/system/git-branches");
+
+export const createGitBranch = (name: string): Promise<{ branch: string }> =>
+  request("/api/system/git-branches", { method: "POST", json: { name } });
 
 // ─── File listing (Composer @-mention picker) ───────────────────────────────
 

@@ -20,6 +20,7 @@ import { useMemo, useState } from "react";
 import { decideComposerTool } from "@/lib/composer";
 import { useBoard } from "@/lib/state";
 import type { CardFlavor, ComposerPendingToolUse } from "@/lib/types";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 
 const FLAVORS: CardFlavor[] = ["feature", "bug", "refactor", "chore", "docs"];
 
@@ -149,7 +150,7 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
   return (
     <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-[13px] shadow-sm">
       <div className="mb-2 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-emerald-800">
+        <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold uppercase text-emerald-800">
           <Pencil className="h-3.5 w-3.5" /> make_card · awaiting approval
         </span>
         <span className="font-mono text-[10.5px] text-emerald-700/70">
@@ -158,52 +159,52 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
       </div>
 
       <Field label="Title">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="w-full rounded border border-black/10 bg-white px-2 py-1 text-[13px] focus:border-ink focus:outline-none"
-        />
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="text-[13px]"
+          />
       </Field>
 
       <Field label="Description">
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={6}
-          className="w-full resize-y rounded border border-black/10 bg-white p-2 font-mono text-[12px] focus:border-ink focus:outline-none"
-        />
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={6}
+            className="resize-y p-2 font-mono text-[12px]"
+          />
       </Field>
 
       <div className="mt-2 grid grid-cols-3 gap-2">
         <Field label="Priority">
-          <select
+          <Select
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value) as 1 | 2 | 3)}
-            className="w-full rounded border border-black/10 bg-white px-2 py-1 text-[12.5px] focus:border-ink focus:outline-none"
+            className="text-[12.5px]"
           >
             <option value={1}>P1</option>
             <option value={2}>P2</option>
             <option value={3}>P3</option>
-          </select>
+          </Select>
         </Field>
         <Field label="Flavor">
-          <select
+          <Select
             value={flavor}
             onChange={(e) => setFlavor(e.target.value as CardFlavor)}
-            className="w-full rounded border border-black/10 bg-white px-2 py-1 text-[12.5px] focus:border-ink focus:outline-none"
+            className="text-[12.5px]"
           >
             {FLAVORS.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Scope">
-          <select
+          <Select
             value={scope ?? ""}
             onChange={(e) => setScope(e.target.value || null)}
-            className="w-full rounded border border-black/10 bg-white px-2 py-1 text-[12.5px] focus:border-ink focus:outline-none"
+            className="text-[12.5px]"
           >
             <option value="">(none)</option>
             {scopes.map((s) => (
@@ -211,32 +212,32 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
                 {s.label}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
       </div>
 
       <div className="mt-2">
         <Field label="Deps" hint="4-digit ids or #N batch refs, comma-separated">
-          <input
+          <Input
             value={depsText}
             onChange={(e) => setDepsText(e.target.value)}
             placeholder="0038, #0"
-            className="w-full rounded border border-black/10 bg-white px-2 py-1 font-mono text-[12px] focus:border-ink focus:outline-none"
+            className="font-mono text-[12px]"
           />
         </Field>
       </div>
 
       {rejecting && (
         <div className="mt-2 rounded border border-red-200 bg-red-50/60 p-2">
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-red-800">
+          <div className="mb-1 text-[11px] font-medium uppercase text-red-800">
             Rejection reason (optional)
           </div>
-          <textarea
+          <Textarea
             value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)}
             rows={2}
             placeholder="e.g. split this into two cards, one for the API and one for the UI"
-            className="w-full resize-none rounded border border-red-200 bg-white p-1.5 text-[12.5px] focus:border-red-500 focus:outline-none"
+            className="resize-none border-red-200 p-1.5 text-[12.5px] focus:border-red-500"
           />
         </div>
       )}
@@ -244,50 +245,57 @@ export function ComposerMakeCardPreview({ pending, threadId }: Props) {
       <div className="mt-3 flex items-center justify-end gap-2">
         {!rejecting ? (
           <>
-            <button
+            <Button
               type="button"
               onClick={() => setRejecting(true)}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+              variant="ghost"
+              size="xs"
+              className="text-red-700 hover:bg-red-50"
+              icon={<X className="h-3.5 w-3.5" />}
             >
-              <X className="h-3.5 w-3.5" /> Reject
-            </button>
-            <button
+              Reject
+            </Button>
+            <Button
               type="button"
               onClick={onApprove}
               disabled={busy || !title.trim()}
+              variant="primary"
+              size="xs"
               className={clsx(
-                "inline-flex items-center gap-1 rounded px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50",
                 edited
                   ? "bg-amber-600 hover:bg-amber-700"
                   : "bg-emerald-600 hover:bg-emerald-700",
               )}
+              icon={<Check className="h-3.5 w-3.5" />}
             >
-              <Check className="h-3.5 w-3.5" />{" "}
               {edited ? "Edit & Approve" : "Approve"}
-            </button>
+            </Button>
           </>
         ) : (
           <>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 setRejecting(false);
                 setRejectReason("");
               }}
               disabled={busy}
-              className="rounded px-2 py-1 text-[12px] text-ink-muted hover:bg-black/5 disabled:opacity-50"
+              variant="ghost"
+              size="xs"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={onReject}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded bg-red-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              variant="danger"
+              size="xs"
+              icon={<X className="h-3.5 w-3.5" />}
             >
-              <X className="h-3.5 w-3.5" /> Send rejection
-            </button>
+              Send rejection
+            </Button>
           </>
         )}
       </div>
@@ -306,7 +314,7 @@ function Field({
 }) {
   return (
     <label className="mt-2 block first:mt-0">
-      <div className="mb-0.5 flex items-center justify-between text-[10.5px] font-medium uppercase tracking-wide text-ink-subtle">
+      <div className="mb-0.5 flex items-center justify-between text-[10.5px] font-medium uppercase text-ink-subtle">
         <span>{label}</span>
         {hint && <span className="text-[10px] normal-case">{hint}</span>}
       </div>

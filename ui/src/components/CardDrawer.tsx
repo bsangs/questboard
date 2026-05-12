@@ -40,8 +40,6 @@ import {
   reopenCard,
   requeueCard,
   restoreCard,
-  retryPostBuild,
-  stopPostBuild,
 } from "@/lib/api";
 import { useBoard } from "@/lib/state";
 import { Markdown } from "./Markdown";
@@ -80,7 +78,7 @@ const STATIC_TRANSITIONS: Record<CardStatus, CardStatus[]> = {
 /**
  * Per-card transition policy. For stuck cards, branches on `merged_sha`:
  *   merged_sha == null → ["ready"]            (re-queue)
- *   merged_sha != null → ["merging", "done"]  (retry post-build / force done)
+ *   merged_sha != null → ["done"]             (force done)
  *
  * The stuck-with-merged_sha targets ARE listed here so the inline status
  * select shows them too (alongside the explicit drawer banner buttons),
@@ -88,7 +86,7 @@ const STATIC_TRANSITIONS: Record<CardStatus, CardStatus[]> = {
  */
 function transitionsFor(card: CardSummary): CardStatus[] {
   if (card.status !== "stuck") return STATIC_TRANSITIONS[card.status] ?? [];
-  return card.merged_sha == null ? ["ready"] : ["merging", "done"];
+  return card.merged_sha == null ? ["ready"] : ["done"];
 }
 
 const STATUS_LABEL: Record<CardStatus, string> = {
@@ -114,11 +112,6 @@ async function transitionCardStatus(
 ): Promise<void> {
   if (from === "backlog" && to === "ready") {
     await moveToReady(cardId);
-    return;
-  }
-  // stuck-with-merged_sha → merging: manual retry-post-build.
-  if (from === "stuck" && to === "merging") {
-    await retryPostBuild(cardId);
     return;
   }
   // stuck-with-merged_sha → done: user override (force-done). The drawer's
@@ -171,7 +164,7 @@ const KIND_STYLE: Record<CommentKind, string> = {
   stuck: "bg-amber-50 border-amber-200",
   answer: "bg-blue-50 border-blue-200",
   resumed: "bg-emerald-50 border-emerald-200",
-  review_note: "bg-violet-50 border-violet-200",
+  review_note: "bg-amber-50 border-amber-200",
   note: "bg-slate-50 border-slate-200",
   system_event: "bg-gray-50 border-gray-200",
   description_updated: "bg-gray-50 border-gray-200",
@@ -323,12 +316,12 @@ export function CardDrawer() {
   return (
     <Dialog.Root open={open} onOpenChange={(o) => !o && close()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[2px] animate-fadeIn" />
+        <Dialog.Overlay className="fixed inset-0 z-30 bg-slate-950/20 backdrop-blur-[2px] animate-fadeIn" />
         <Dialog.Content
           aria-label="Card detail"
           style={contentStyle}
           className={clsx(
-            "fixed inset-y-0 right-0 z-40 flex flex-col border-l border-black/10 bg-white shadow-drawer animate-slideIn focus:outline-none",
+            "fixed inset-y-0 right-0 z-40 flex flex-col border-l border-border-strong bg-surface shadow-drawer animate-slideIn focus:outline-none",
             // Suppress text-selection flicker while dragging the resize handle.
             resizing && "select-none",
           )}
@@ -347,9 +340,9 @@ export function CardDrawer() {
             >
               <div
                 className={clsx(
-                  "absolute inset-y-0 left-0 w-px bg-black/10 transition-colors",
-                  "group-hover:bg-black/30",
-                  resizing && "bg-black/40",
+                  "absolute inset-y-0 left-0 w-px bg-ink/10 transition-colors",
+                  "group-hover:bg-slate-900/30",
+                  resizing && "bg-slate-950/40",
                 )}
               />
             </div>
@@ -586,7 +579,7 @@ function DrawerBody({
       {/* Header */}
       <header
         className={clsx(
-          "flex shrink-0 items-start justify-between gap-3 border-b border-black/5 py-4",
+          "flex shrink-0 items-start justify-between gap-3 border-b border-border py-4",
           isMobile ? "px-4" : "px-6",
         )}
       >
@@ -598,7 +591,7 @@ function DrawerBody({
             type="button"
             onClick={onClose}
             aria-label="Back"
-            className="-ml-1 mt-0.5 shrink-0 rounded p-1.5 text-ink-muted hover:bg-black/5"
+            className="-ml-1 mt-0.5 shrink-0 rounded p-1.5 text-ink-muted hover:bg-surface-muted"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -634,7 +627,7 @@ function DrawerBody({
                   }
                 }}
                 disabled={busy}
-                className="min-w-0 flex-1 rounded border border-black/10 bg-white px-2 py-1 text-[15px] font-semibold leading-tight text-ink focus:border-ink focus:outline-none"
+                className="min-w-0 flex-1 rounded border border-border-strong bg-surface px-2 py-1 text-[15px] font-semibold leading-tight text-ink focus:border-ink focus:outline-none"
                 aria-label="Card title"
               />
               <button
@@ -644,7 +637,7 @@ function DrawerBody({
                   setTitleDraft(card.title);
                 }}
                 disabled={busy}
-                className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5 disabled:opacity-50"
+                className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -652,7 +645,7 @@ function DrawerBody({
                 type="button"
                 onClick={saveTitle}
                 disabled={busy || !titleDraft.trim()}
-                className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-black disabled:opacity-50"
+                className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-slate-900 disabled:opacity-50"
               >
                 Save
               </button>
@@ -668,7 +661,7 @@ function DrawerBody({
                   setTitleDraft(card.title);
                   setEditingTitle(true);
                 }}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-normal text-ink-muted hover:bg-black/5"
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-normal text-ink-muted hover:bg-surface-muted"
               >
                 Edit
               </button>
@@ -684,7 +677,7 @@ function DrawerBody({
         {!isMobile && (
           <Dialog.Close asChild>
             <button
-              className="rounded p-1.5 text-ink-subtle hover:bg-black/5"
+              className="rounded p-1.5 text-ink-subtle hover:bg-surface-muted"
               aria-label="Close"
             >
               <X className="h-4 w-4" />
@@ -694,22 +687,13 @@ function DrawerBody({
       </header>
 
       {/* Stuck banner — yellow for unmerged work, blue for stuck-with-
-          merged_sha. The merged variant carries Retry / Mark-Done / Stop
-          actions inline; see StuckBanner for the policy details. */}
+          merged_sha. The merged variant carries Mark-Done inline; see
+          StuckBanner for the policy details. */}
       {card.status === "stuck" && (
         <StuckBanner
           card={card}
           postBuildAttempts={full?.frontmatter.post_build_attempts ?? []}
           busy={busy}
-          onRetry={() =>
-            withBusy(async () => {
-              await retryPostBuild(cardId);
-              pushToast({
-                kind: "info",
-                message: "Re-running post-build…",
-              });
-            })
-          }
           onForceDone={() =>
             withBusy(async () => {
               const reason = window.prompt(
@@ -722,7 +706,7 @@ function DrawerBody({
                 !confirm(
                   `Mark card ${cardId} done? Code is already at ${
                     card.merged_sha?.slice(0, 12) ?? "main"
-                  }; this just stops the post-build/deploy gate from blocking it.`,
+                  }; this accepts the already-merged work as complete.`,
                 )
               ) {
                 return;
@@ -733,21 +717,6 @@ function DrawerBody({
                 message: "Card marked done (force).",
               });
               onClose();
-            })
-          }
-          onStop={() =>
-            withBusy(async () => {
-              if (
-                !confirm(
-                  "Stop the running post-build? It will be SIGTERMed and the card returns to stuck.",
-                )
-              )
-                return;
-              await stopPostBuild(cardId);
-              pushToast({
-                kind: "info",
-                message: "Post-build stopped.",
-              });
             })
           }
         />
@@ -761,7 +730,7 @@ function DrawerBody({
       {/* Body: tabs stay fixed; only the active tab content scrolls. */}
       <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
         {/* Tabs */}
-        <div className="mb-3 flex shrink-0 items-center gap-1 overflow-x-auto border-b border-black/5">
+        <div className="mb-3 flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border">
           {(
             [
               "description",
@@ -808,13 +777,13 @@ function DrawerBody({
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-1 focus:outline-none" tabIndex={0}>
           {tab === "description" && (
           <div className="space-y-4">
-            <div className="rounded-md border border-black/5 bg-white">
-              <div className="flex items-center justify-between border-b border-black/5 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-subtle">
+            <div className="rounded-md border border-border bg-surface">
+              <div className="flex items-center justify-between border-b border-border px-3 py-1.5 text-[11px] font-medium uppercase text-ink-subtle">
                 <span>Description</span>
                 {!editingDescription ? (
                   <button
                     onClick={() => setEditingDescription(true)}
-                    className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5"
+                    className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted"
                   >
                     Edit
                   </button>
@@ -825,14 +794,14 @@ function DrawerBody({
                         setEditingDescription(false);
                         setDescDraft(full?.description ?? "");
                       }}
-                      className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5"
+                      className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={saveDescription}
                       disabled={busy}
-                      className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-black disabled:opacity-50"
+                      className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-slate-900 disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -860,8 +829,8 @@ function DrawerBody({
               </div>
             </div>
 
-            <div className="rounded-md border border-black/5 bg-white">
-              <div className="flex items-center justify-between border-b border-black/5 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-subtle">
+            <div className="rounded-md border border-border bg-surface">
+              <div className="flex items-center justify-between border-b border-border px-3 py-1.5 text-[11px] font-medium uppercase text-ink-subtle">
                 <span>Dependencies</span>
                 {!editingDeps ? (
                   <button
@@ -870,7 +839,7 @@ function DrawerBody({
                       setDepsDraft(currentDeps.join(", "));
                       setEditingDeps(true);
                     }}
-                    className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5"
+                    className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted"
                   >
                     Edit
                   </button>
@@ -882,7 +851,7 @@ function DrawerBody({
                         setEditingDeps(false);
                         setDepsDraft(currentDeps.join(", "));
                       }}
-                      className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-black/5"
+                      className="rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-surface-muted"
                     >
                       Cancel
                     </button>
@@ -890,7 +859,7 @@ function DrawerBody({
                       type="button"
                       onClick={saveDeps}
                       disabled={busy}
-                      className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-black disabled:opacity-50"
+                      className="rounded bg-ink px-2 py-0.5 text-[11px] font-medium text-white hover:bg-slate-900 disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -915,7 +884,7 @@ function DrawerBody({
                       }}
                       disabled={busy}
                       placeholder="0012, 0045, 0101"
-                      className="w-full rounded border border-black/10 bg-white px-2 py-1.5 font-mono text-[12.5px] focus:border-ink focus:outline-none"
+                      className="w-full rounded border border-border-strong bg-surface px-2 py-1.5 font-mono text-[12.5px] focus:border-ink focus:outline-none"
                       aria-label="Card dependencies"
                     />
                     <p className="text-[11px] text-ink-subtle">
@@ -940,8 +909,8 @@ function DrawerBody({
             </div>
 
             {dod.length > 0 && (
-              <div className="rounded-md border border-black/5 bg-white">
-                <div className="border-b border-black/5 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-subtle">
+              <div className="rounded-md border border-border bg-surface">
+                <div className="border-b border-border px-3 py-1.5 text-[11px] font-medium uppercase text-ink-subtle">
                   Definition of Done
                 </div>
                 <ul className="space-y-1 p-3 text-[12.5px]">
@@ -1023,7 +992,7 @@ function DrawerBody({
       </div>
 
       {/* Reply / actions */}
-      <footer className="shrink-0 border-t border-black/5 bg-white px-6 py-3">
+      <footer className="shrink-0 border-t border-border bg-surface px-6 py-3">
         <ReplyBox
           cardId={cardId}
           status={status}
@@ -1047,7 +1016,7 @@ function DrawerBody({
               <button
                 onClick={handleRestore}
                 disabled={busy}
-                className="inline-flex items-center gap-1 rounded px-2 py-1 text-ink-muted hover:bg-black/5"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-ink-muted hover:bg-surface-muted"
               >
                 <ArchiveRestore className="h-3.5 w-3.5" /> Restore
               </button>
@@ -1056,7 +1025,7 @@ function DrawerBody({
               <button
                 onClick={handleArchive}
                 disabled={busy}
-                className="inline-flex items-center gap-1 rounded px-2 py-1 text-ink-muted hover:bg-black/5"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-ink-muted hover:bg-surface-muted"
               >
                 <Archive className="h-3.5 w-3.5" /> Archive
               </button>
@@ -1180,14 +1149,14 @@ function ReplyBox({
 
   if (!enabled) {
     return (
-      <div className="rounded-md border border-dashed border-black/10 bg-[var(--bg-muted)] px-3 py-2 text-[11.5px] text-ink-subtle">
+      <div className="rounded-md border border-dashed border-border-strong bg-[var(--bg-muted)] px-3 py-2 text-[11.5px] text-ink-subtle">
         Reply is disabled in this status.
       </div>
     );
   }
 
   return (
-    <div className="rounded-md border border-black/10 bg-white">
+    <div className="rounded-md border border-border-strong bg-surface">
       <textarea
         ref={textareaRef}
         value={value}
@@ -1204,11 +1173,11 @@ function ReplyBox({
         className="w-full resize-none border-0 bg-transparent p-2.5 text-[13px] focus:outline-none"
       />
       <input {...fileInputProps} />
-      <div className="flex items-center justify-end gap-1 border-t border-black/5 px-2 py-1.5">
+      <div className="flex items-center justify-end gap-1 border-t border-border px-2 py-1.5">
         <button
           type="button"
           onClick={pickFile}
-          className="mr-auto rounded p-1 text-ink-subtle hover:bg-black/5"
+          className="mr-auto rounded p-1 text-ink-subtle hover:bg-surface-muted"
           title="Attach image"
         >
           <ImagePlus className="h-3.5 w-3.5" />
@@ -1217,7 +1186,7 @@ function ReplyBox({
           <button
             onClick={onAnswer}
             disabled={busy || !value.trim()}
-            className="inline-flex items-center gap-1 rounded bg-ink px-2.5 py-1 text-[12px] font-medium text-white hover:bg-black disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded bg-ink px-2.5 py-1 text-[12px] font-medium text-white hover:bg-slate-900 disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" /> 답변 작성
           </button>
@@ -1227,7 +1196,7 @@ function ReplyBox({
             <button
               onClick={onReopen}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-ink-muted hover:bg-black/5"
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-ink-muted hover:bg-surface-muted"
               title="Send feedback and re-spawn worker"
             >
               <RefreshCcw className="h-3.5 w-3.5" /> Reopen
@@ -1235,7 +1204,7 @@ function ReplyBox({
             <button
               onClick={onMoveAi}
               disabled={busy}
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-violet-700 hover:bg-violet-50"
+              className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-amber-700 hover:bg-amber-50"
             >
               Move to AI Review
             </button>
@@ -1299,7 +1268,7 @@ function DescriptionEditor({
         onDrop={onDrop}
         onDragOver={onDragOver}
         rows={14}
-        className="w-full resize-y rounded border border-black/10 bg-white p-2 font-mono text-[12.5px] focus:border-ink focus:outline-none"
+        className="w-full resize-y rounded border border-border-strong bg-surface p-2 font-mono text-[12.5px] focus:border-ink focus:outline-none"
       />
       <input {...fileInputProps} />
       <div className="flex items-center justify-between text-[11px] text-ink-subtle">
@@ -1307,7 +1276,7 @@ function DescriptionEditor({
         <button
           type="button"
           onClick={pickFile}
-          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-muted hover:bg-black/5"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-muted hover:bg-surface-muted"
         >
           <ImagePlus className="h-3.5 w-3.5" /> Attach image
         </button>
@@ -1338,7 +1307,7 @@ function HistoryList({
       {history.map((h, i) => (
         <li
           key={`${cardId}-h-${i}-${h.ts}`}
-          className="rounded border border-black/5 bg-white px-3 py-1.5 text-[12.5px] leading-snug"
+          className="rounded border border-border bg-surface px-3 py-1.5 text-[12.5px] leading-snug"
         >
           <div className="mb-0.5 flex items-center justify-between text-[10.5px] text-ink-subtle">
             <span className="font-mono">{HISTORY_LABEL[h.kind] ?? h.kind}</span>
@@ -1575,8 +1544,8 @@ function StagesStrip({ stages }: { stages: CardStage[] }) {
   const visible =
     expanded || total <= VISIBLE ? stages : stages.slice(total - VISIBLE);
   return (
-    <div className="shrink-0 border-b border-black/5 bg-[var(--bg-muted)] px-6 py-2">
-      <div className="mb-1 flex items-baseline justify-between text-[10.5px] font-semibold uppercase tracking-wide text-ink-subtle">
+    <div className="shrink-0 border-b border-border bg-[var(--bg-muted)] px-6 py-2">
+      <div className="mb-1 flex items-baseline justify-between text-[10.5px] font-semibold uppercase text-ink-subtle">
         <span>Stages</span>
         <span className="flex items-center gap-2">
           <span className="font-mono lowercase">
@@ -1586,7 +1555,7 @@ function StagesStrip({ stages }: { stages: CardStage[] }) {
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="rounded px-1.5 py-0.5 font-mono text-[10px] normal-case text-ink-muted ring-1 ring-inset ring-black/10 hover:bg-black/5"
+              className="rounded px-1.5 py-0.5 font-mono text-[10px] normal-case text-ink-muted ring-1 ring-inset ring-border-strong hover:bg-surface-muted"
             >
               {expanded ? `▾ collapse` : `▸ +${overflow} earlier`}
             </button>
@@ -1639,7 +1608,7 @@ const STAGE_ROLE_STYLE: Record<
   { dot: string; label: string; text: string }
 > = {
   worker: { dot: "bg-emerald-500", label: "in_progress", text: "text-emerald-700" },
-  reviewer: { dot: "bg-violet-500", label: "ai_review", text: "text-violet-700" },
+  reviewer: { dot: "bg-amber-500", label: "ai_review", text: "text-amber-700" },
   merger: { dot: "bg-blue-500", label: "merging", text: "text-blue-700" },
 };
 
@@ -1677,13 +1646,9 @@ function StageRow({ stage }: { stage: CardStage }) {
  *
  *   merged_sha != null (blue):
  *     The worker's code IS on origin/main; only a downstream step (post-
- *     build, deploy gate) failed. Re-queueing would re-spawn a worker on
- *     already-merged work, so we offer two explicit recovery actions
- *     here:
- *       - Retry post-build  (re-run the configured shell command)
+ *     a downstream step failed. Re-queueing would re-spawn a worker on
+ *     already-merged work, so we offer one explicit recovery action here:
  *       - Mark Done        (force-done; e.g. "I deployed by hand")
- *     If a post-build is currently running, we replace the retry button
- *     with "Stop post-build" and disable everything else.
  *
  * The banner pulls the most recent post-build attempt for the failure
  * excerpt + classification so the user can see WHY at a glance without
@@ -1692,26 +1657,21 @@ function StageRow({ stage }: { stage: CardStage }) {
 function StuckBanner({
   card,
   postBuildAttempts,
-  onRetry,
   onForceDone,
-  onStop,
   busy,
 }: {
   card: CardSummary;
   postBuildAttempts: import("@/lib/types").PostBuildAttempt[];
-  onRetry: () => void;
   onForceDone: () => void;
-  onStop: () => void;
   busy: boolean;
 }) {
   const isMerged = card.merged_sha != null;
-  const running = !!card.post_build_active;
 
   if (!isMerged) {
     // Original yellow banner — unchanged behavior for unmerged stucks.
     return (
       <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-3">
-        <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+        <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase text-amber-800">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
           Stuck — {card.stuck_reason ?? "unknown reason"}
         </div>
@@ -1724,7 +1684,7 @@ function StuckBanner({
     );
   }
 
-  // Merged variant: blue tone, post-build-aware.
+  // Merged variant: blue tone, force-done recovery only.
   const sha12 = card.merged_sha!.slice(0, 12);
   const transientStreak = (() => {
     let n = 0;
@@ -1745,7 +1705,7 @@ function StuckBanner({
 
   return (
     <div className="shrink-0 border-b border-blue-200 bg-blue-50 px-6 py-3">
-      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-blue-800">
+      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase text-blue-800">
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
         Stuck — code already on{" "}
         <code className="rounded bg-blue-100 px-1 py-0.5 font-mono text-[10.5px]">
@@ -1756,7 +1716,7 @@ function StuckBanner({
       <div className="text-[12.5px] text-blue-900">
         {lastFailure ? (
           <>
-            Post-build/deploy step failed{" "}
+            Prior post-build/deploy step failed{" "}
             <span className="font-semibold">
               ({lastFailure.classification})
             </span>
@@ -1764,7 +1724,7 @@ function StuckBanner({
             .
           </>
         ) : (
-          <>The post-build/deploy step failed.</>
+          <>The card is stuck even though code is already merged.</>
         )}
         {totalAttempts > 0 && (
           <>
@@ -1777,42 +1737,15 @@ function StuckBanner({
         )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {running ? (
-          <button
-            type="button"
-            onClick={onStop}
-            disabled={busy}
-            className="inline-flex items-center gap-1 rounded bg-red-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-red-700 disabled:opacity-50"
-            title="SIGTERM the running post-build"
-          >
-            Stop post-build
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onRetry}
-            disabled={busy}
-            className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            title="Re-run the configured post-build command"
-          >
-            Retry post-build
-          </button>
-        )}
         <button
           type="button"
           onClick={onForceDone}
-          disabled={busy || running}
-          className="inline-flex items-center gap-1 rounded border border-blue-300 bg-white px-2.5 py-1 text-[12px] font-medium text-blue-800 hover:bg-blue-50 disabled:opacity-50"
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           title="Mark the card done; merged_sha is preserved for audit"
         >
           Mark Done
         </button>
-        {running && (
-          <span className="ml-1 inline-flex items-center gap-1 font-mono text-[11px] text-blue-700">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
-            running…
-          </span>
-        )}
       </div>
     </div>
   );

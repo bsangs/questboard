@@ -15,6 +15,8 @@ import {
   Wrench,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { StatusDot } from "./patterns";
+import { Badge } from "./ui";
 import { useBoard } from "@/lib/state";
 import type { CardSummary } from "@/lib/types";
 
@@ -27,9 +29,9 @@ const FLAVOR_ICON = {
 } as const;
 
 const PRIORITY_STYLE: Record<1 | 2 | 3, string> = {
-  1: "bg-red-50 text-red-700 ring-red-200",
-  2: "bg-amber-50 text-amber-700 ring-amber-200",
-  3: "bg-blue-50 text-blue-700 ring-blue-200",
+  1: "red",
+  2: "amber",
+  3: "slate",
 };
 
 function fmtElapsed(seconds: number): string {
@@ -119,12 +121,7 @@ export function CardTile({ card, draggable = false }: Props) {
   const isAiReviewing =
     card.status === "ai_review" && card.owner_pid != null;
   const isMerging = card.status === "merging" && card.owner_pid != null;
-  // Post-build is a sub-phase of merging — shown when the merger has
-  // finished merging and is now running the user's post-build command.
-  // Takes precedence over `merging` in the status line so we don't
-  // double-display.
-  const isPostBuild = card.post_build_active === true;
-  const isHelperLive = isInProgress || isAiReviewing || isMerging || isPostBuild;
+  const isHelperLive = isInProgress || isAiReviewing || isMerging;
   const activeRole: "worker" | "reviewer" | "merger" | null = isMerging
     ? "merger"
     : isAiReviewing
@@ -134,15 +131,12 @@ export function CardTile({ card, draggable = false }: Props) {
     : null;
 
   // Single-source status descriptor for the dedicated status line. Picks
-  // ONE word per card (priority post-build > merging > reviewing > in
-  // progress) so the line never reads as multiple states at once.
+  // ONE word per card so the line never reads as multiple states at once.
   const statusBadge: { label: string; color: string; ring: string } | null =
-    isPostBuild
-      ? { label: "post-build", color: "text-amber-700", ring: "bg-amber-500" }
-      : isMerging
-      ? { label: "merging", color: "text-blue-700", ring: "bg-blue-500" }
+    isMerging
+      ? { label: "merging", color: "text-slate-700", ring: "bg-slate-500" }
       : isAiReviewing
-      ? { label: "reviewing", color: "text-violet-700", ring: "bg-violet-500" }
+      ? { label: "reviewing", color: "text-emerald-700", ring: "bg-emerald-500" }
       : isInProgress
       ? { label: "in progress", color: "text-emerald-700", ring: "bg-emerald-500" }
       : null;
@@ -186,10 +180,10 @@ export function CardTile({ card, draggable = false }: Props) {
         if (e.key === "Enter") openDrawer(card.id);
       }}
       className={clsx(
-        "group relative cursor-pointer select-none rounded-md bg-white p-3",
+        "group relative cursor-pointer select-none rounded-md border border-border bg-surface p-3",
         "shadow-tile transition-shadow duration-150 hover:shadow-tileHover",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50",
-        selected && "ring-2 ring-blue-500/70",
+        "active:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)]",
+        selected && "ring-2 ring-[var(--focus)]",
         drag.isDragging && "opacity-60",
         card.broken && "ring-1 ring-red-300",
       )}
@@ -197,15 +191,13 @@ export function CardTile({ card, draggable = false }: Props) {
       {/* Top row: flavor icon · priority · ID */}
       <div className="mb-1.5 flex items-center gap-2 text-[11px] text-ink-muted">
         <FlavorIcon className="h-3.5 w-3.5 text-ink-subtle" aria-hidden />
-        <span
-          className={clsx(
-            "rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ring-1 ring-inset",
-            PRIORITY_STYLE[card.priority],
-          )}
+        <Badge
+          tone={PRIORITY_STYLE[card.priority] as "red" | "amber" | "slate"}
+          mono
           title={`Priority ${card.priority}`}
         >
           P{card.priority}
-        </span>
+        </Badge>
         <span className="font-mono text-[10px] text-ink-subtle">
           {card.id}
         </span>
@@ -215,12 +207,13 @@ export function CardTile({ card, draggable = false }: Props) {
             appears — header is reserved for static identifiers
             (flavor / priority / id / scope). */}
         {scopeLabel && (
-          <span
-            className="max-w-[140px] truncate rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted ring-1 ring-inset ring-black/5"
+          <Badge
+            tone="neutral"
+            className="max-w-[140px] truncate"
             title={`Scope: ${scopeLabel}`}
           >
             {scopeLabel}
-          </span>
+          </Badge>
         )}
       </div>
 
@@ -231,7 +224,7 @@ export function CardTile({ card, draggable = false }: Props) {
 
       {/* Broken */}
       {card.broken && (
-        <div className="mt-2 inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-inset ring-red-200">
+        <div className="mt-2 inline-flex items-center gap-1 rounded-sm bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-inset ring-red-200">
           <AlertTriangle className="h-3 w-3" /> broken frontmatter
         </div>
       )}
@@ -241,11 +234,10 @@ export function CardTile({ card, draggable = false }: Props) {
           else. Hidden when the card isn't actively being worked. */}
       {statusBadge && (
         <div className="mt-2 flex items-center gap-1.5 text-[11.5px] leading-none">
-          <span
-            className={clsx(
-              "inline-block h-1.5 w-1.5 animate-pulseDot rounded-full",
-              statusBadge.ring,
-            )}
+          <StatusDot
+            tone={isMerging ? "neutral" : "green"}
+            pulse
+            className={statusBadge.ring}
           />
           <span className={clsx("font-medium", statusBadge.color)}>
             {statusBadge.label}
@@ -272,7 +264,7 @@ export function CardTile({ card, draggable = false }: Props) {
 
       {/* Stuck */}
       {isStuck && card.stuck_question && (
-        <div className="mt-2 flex items-start gap-1.5 rounded bg-amber-50 px-2 py-1 text-[11.5px] text-amber-900 ring-1 ring-inset ring-amber-200">
+        <div className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11.5px] text-amber-900 ring-1 ring-inset ring-amber-200">
           <AlertTriangle className="mt-[2px] h-3 w-3 shrink-0" />
           <span className="line-clamp-2">{card.stuck_question}</span>
         </div>
@@ -280,14 +272,14 @@ export function CardTile({ card, draggable = false }: Props) {
 
       {/* Queued / blocked badges */}
       {card.queued && (
-        <div className="mt-2 inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-muted">
+        <Badge tone="neutral" className="mt-2">
           queued
-        </div>
+        </Badge>
       )}
       {card.blocked_by?.length ? (
-        <div className="mt-2 inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-muted">
+        <Badge tone="neutral" className="mt-2">
           blocked by {card.blocked_by.map((d) => `#${d}`).join(", ")}
-        </div>
+        </Badge>
       ) : null}
 
       {/* Footer: comments + last activity */}
@@ -338,7 +330,7 @@ function RoleTokenChips({
       )}
       {showReviewer && (
         <span
-          className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 ring-1 ring-inset ring-violet-200"
+          className="rounded-sm bg-amber-50 px-1.5 py-0.5 text-amber-700 ring-1 ring-inset ring-amber-200"
           title={`Reviewer — in ${ri.toLocaleString()} · out ${ro.toLocaleString()}`}
         >
           R ↓{fmtTokensCompact(ri)} ↑{fmtTokensCompact(ro)}
@@ -346,7 +338,7 @@ function RoleTokenChips({
       )}
       {showMerger && (
         <span
-          className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700 ring-1 ring-inset ring-blue-200"
+          className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-slate-700 ring-1 ring-inset ring-slate-200"
           title={`Merger — in ${mi.toLocaleString()} · out ${mo.toLocaleString()}`}
         >
           M ↓{fmtTokensCompact(mi)} ↑{fmtTokensCompact(mo)}

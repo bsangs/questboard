@@ -355,21 +355,21 @@ export function DiffViewer({ cardId }: { cardId: string }) {
   if (loading) {
     return (
       <div ref={containerRef}>
-        <div className="rounded-md border border-black/5 bg-[var(--bg-muted)] p-3 text-[12.5px] text-ink-subtle">
+        <div className="rounded-md border border-border bg-[var(--bg-muted)] p-3 text-[12.5px] text-ink-subtle">
           Loading diff…
         </div>
       </div>
     );
   }
   const emptyDiffMessage = (
-    <div className="rounded-md border border-dashed border-black/10 bg-white p-6 text-center text-[12.5px] text-ink-subtle">
+    <div className="rounded-md border border-dashed border-border-strong bg-surface p-6 text-center text-[12.5px] text-ink-subtle">
       No diff yet. The worker hasn&apos;t made any changes against{" "}
       <span className="font-mono">origin/main</span>.
     </div>
   );
 
   const header = (
-    <div className="flex items-center justify-between rounded-md border border-black/5 bg-[var(--bg-muted)] px-3 py-2 text-[12px] text-ink-muted">
+    <div className="flex items-center justify-between rounded-md border border-border bg-[var(--bg-muted)] px-3 py-2 text-[12px] text-ink-muted">
       <span>
         {files.length} file{files.length === 1 ? "" : "s"} changed
       </span>
@@ -388,7 +388,7 @@ export function DiffViewer({ cardId }: { cardId: string }) {
               "rounded p-1 transition-colors",
               allOpen
                 ? "cursor-default text-ink-subtle/40"
-                : "text-ink-subtle hover:bg-black/5 hover:text-ink",
+                : "text-ink-subtle hover:bg-surface-muted hover:text-ink",
             )}
           >
             <ChevronsUpDown className="h-3.5 w-3.5" />
@@ -402,7 +402,7 @@ export function DiffViewer({ cardId }: { cardId: string }) {
               "rounded p-1 transition-colors",
               allClosed
                 ? "cursor-default text-ink-subtle/40"
-                : "text-ink-subtle hover:bg-black/5 hover:text-ink",
+                : "text-ink-subtle hover:bg-surface-muted hover:text-ink",
             )}
           >
             <ChevronsDownUp className="h-3.5 w-3.5" />
@@ -471,11 +471,11 @@ function FileBlock({
       // scroll-mt keeps a hair of breathing room when jumpTo lands on
       // this block — without it the sticky drawer header would clip
       // the file's title bar.
-      className="scroll-mt-2 overflow-hidden rounded-md border border-black/10 bg-white"
+      className="scroll-mt-2 overflow-hidden rounded-md border border-border-strong bg-surface"
     >
       <button
         onClick={onToggle}
-        className="flex w-full items-center gap-2 border-b border-black/5 bg-[var(--bg-muted)] px-3 py-2 text-left hover:bg-black/5"
+        className="flex w-full items-center gap-2 border-b border-border bg-[var(--bg-muted)] px-3 py-2 text-left hover:bg-surface-muted"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-subtle" />
@@ -557,7 +557,7 @@ function DiffLine({ line }: { line: ParsedLine }) {
     >
       <td
         className={clsx(
-          "select-none border-r border-black/5 px-2 py-px text-right align-top text-[10.5px] tabular-nums",
+          "select-none border-r border-border px-2 py-px text-right align-top text-[10.5px] tabular-nums",
           isAdd ? "text-emerald-700" : isDel ? "text-red-700" : "text-ink-subtle",
         )}
         style={{ width: "1%", minWidth: 36 }}
@@ -566,7 +566,7 @@ function DiffLine({ line }: { line: ParsedLine }) {
       </td>
       <td
         className={clsx(
-          "select-none border-r border-black/5 px-2 py-px text-right align-top text-[10.5px] tabular-nums",
+          "select-none border-r border-border px-2 py-px text-right align-top text-[10.5px] tabular-nums",
           isAdd ? "text-emerald-700" : isDel ? "text-red-700" : "text-ink-subtle",
         )}
         style={{ width: "1%", minWidth: 36 }}
@@ -651,8 +651,8 @@ function FileTreeSidebar({
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   return (
-    <aside className="sticky top-0 max-h-[calc(100vh-12rem)] overflow-y-auto rounded-md border border-black/10 bg-white">
-      <div className="sticky top-0 border-b border-black/5 bg-[var(--bg-muted)] px-3 py-2 text-[10.5px] font-medium uppercase tracking-wider text-ink-subtle">
+    <aside className="sticky top-0 max-h-[calc(100vh-12rem)] overflow-y-auto rounded-md border border-border-strong bg-surface">
+      <div className="sticky top-0 border-b border-border bg-[var(--bg-muted)] px-3 py-2 text-[10.5px] font-medium uppercase text-ink-subtle">
         Files
       </div>
       <div className="py-1">
@@ -671,8 +671,8 @@ function FileTreeSidebar({
 
 function EmptyFileTreeSidebar() {
   return (
-    <aside className="sticky top-0 max-h-[calc(100vh-12rem)] overflow-y-auto rounded-md border border-black/10 bg-white">
-      <div className="sticky top-0 border-b border-black/5 bg-[var(--bg-muted)] px-3 py-2 text-[10.5px] font-medium uppercase tracking-wider text-ink-subtle">
+    <aside className="sticky top-0 max-h-[calc(100vh-12rem)] overflow-y-auto rounded-md border border-border-strong bg-surface">
+      <div className="sticky top-0 border-b border-border bg-[var(--bg-muted)] px-3 py-2 text-[10.5px] font-medium uppercase text-ink-subtle">
         Files
       </div>
       <div className="px-3 py-3 text-[12px] italic text-ink-subtle">
@@ -735,7 +735,7 @@ function DirRow({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] text-ink hover:bg-black/5"
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] text-ink hover:bg-surface-muted"
         style={{ paddingLeft: indent + 8 }}
       >
         {open ? (
@@ -782,7 +782,7 @@ function FileRow({
     <button
       type="button"
       onClick={() => onJump(key)}
-      className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] hover:bg-black/5"
+      className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] hover:bg-surface-muted"
       style={{ paddingLeft: indent + 8 }}
       title={file.path}
     >

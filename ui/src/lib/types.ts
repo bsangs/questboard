@@ -17,6 +17,7 @@ export type {
   HistoryEntry,
   HistoryKind,
   BoardConfig,
+  RoleName,
   SseEvent,
   Scope,
   WorkerRow,
@@ -64,12 +65,6 @@ export interface CardSummary {
    * truth: STUCK_TRANSITIONS in @questboard/core).
    */
   merged_sha?: string | null;
-  /**
-   * True iff the server has a live post-build process running for this
-   * card. Drives the "Stop post-build" affordance + "Retry"-disabled state
-   * in the drawer's stuck banner.
-   */
-  post_build_active?: boolean;
   comment_count?: number;
   /**
    * Per-role lifetime output_tokens. Summed across every transcript file

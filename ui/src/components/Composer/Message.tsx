@@ -79,7 +79,7 @@ export function ComposerMessageRow({ message, threadId, pairedResult }: Props) {
   if (role === "assistant" && text) {
     return (
       <div className="group relative flex flex-col">
-        <div className="max-w-full rounded-lg bg-white px-3 py-2 text-ink ring-1 ring-inset ring-black/5">
+        <div className="max-w-full rounded-lg bg-surface px-3 py-2 text-ink ring-1 ring-inset ring-border">
           <Markdown composerThreadId={scopeThreadId}>{text}</Markdown>
         </div>
         {usage && (usage.input_tokens > 0 || usage.output_tokens > 0) && (
@@ -109,10 +109,10 @@ export function ComposerMessageRow({ message, threadId, pairedResult }: Props) {
           "rounded-md border bg-gray-50 px-2.5 py-1.5 font-mono text-[11px]",
           tool_result.is_error
             ? "border-red-200 text-red-900"
-            : "border-black/10 text-ink",
+            : "border-border-strong text-ink",
         )}
       >
-        <div className="mb-1 text-[10.5px] uppercase tracking-wide text-ink-subtle">
+        <div className="mb-1 text-[10.5px] uppercase text-ink-subtle">
           result {tool_result.is_error && "(error)"}
         </div>
         <pre className="max-h-56 overflow-auto whitespace-pre-wrap leading-snug">

@@ -52,8 +52,6 @@ export interface DispatcherConfig {
   /** Derived from anthropicApiKey presence; see AuthMode docstring. */
   authMode: AuthMode;
   heartbeatTimeoutSec: number;
-  /** Default concurrency before reading config.json. */
-  defaultConcurrency: number;
   /** SIGTERM → SIGKILL grace period (ms). */
   killGraceMs: number;
 }
@@ -195,7 +193,6 @@ export function loadConfig(): DispatcherConfig {
     anthropicApiKey,
     authMode,
     heartbeatTimeoutSec: Number(envValue("WORKER_HEARTBEAT_TIMEOUT_SEC") ?? 300),
-    defaultConcurrency: Number(envValue("BOARD_CONCURRENCY") ?? 8),
     killGraceMs: 5_000,
   };
 }
@@ -215,7 +212,7 @@ export function loadBoardConfig(
 > {
   const fallback = {
     auto_review: false,
-    concurrency_limit: cfg.defaultConcurrency,
+    concurrency_limit: 8,
     telegram_enabled: false,
     dispatch_paused: false,
   };

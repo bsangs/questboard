@@ -98,7 +98,6 @@ Common settings:
 | --- | --- | --- |
 | `BOARD_UI_PORT` | `3030` | Board UI port. |
 | `BOARD_SERVER_PORT` | `3031` | API/SSE port. |
-| `BOARD_CONCURRENCY` | `4` from `init` | Maximum concurrent workers before live config overrides it. |
 | `BOARD_BASE_BRANCH` | auto | Optional base branch override, e.g. `develop`. |
 | `BOARD_DATA` | `.questboard/data` | Card files, SQLite, logs, archive. |
 | `BOARD_WORKTREES` | `.questboard/worktrees` | Per-card Git worktrees. |

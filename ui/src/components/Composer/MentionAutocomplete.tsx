@@ -336,7 +336,7 @@ function FileMode({
           ))
         )}
       </div>
-      <div className="border-t border-black/5 px-2.5 py-1.5 text-[10.5px] text-ink-subtle">
+      <div className="border-t border-border px-2.5 py-1.5 text-[10.5px] text-ink-subtle">
         ↵ to {items[selectedIndex]?.kind === "dir" ? "open folder" : "insert"} ·
         ⎋ to close
       </div>
@@ -370,7 +370,7 @@ export const fileModeUpRef: { current: (() => void) | null } = {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-md border border-black/10 bg-white shadow-md">
+    <div className="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-md border border-border-strong bg-surface shadow-md">
       {children}
     </div>
   );
@@ -387,7 +387,7 @@ function Breadcrumb({
   // way down. Clicking a segment jumps directly there.
   const segs = path ? path.split("/") : [];
   return (
-    <div className="flex items-center gap-0.5 overflow-x-auto border-b border-black/5 px-2 py-1.5 text-[11.5px] text-ink-muted">
+    <div className="flex items-center gap-0.5 overflow-x-auto border-b border-border px-2 py-1.5 text-[11.5px] text-ink-muted">
       <button
         type="button"
         onMouseDown={(e) => {
@@ -395,7 +395,7 @@ function Breadcrumb({
           onJump("");
         }}
         className={clsx(
-          "inline-flex items-center gap-1 rounded px-1 py-0.5 hover:bg-black/5",
+          "inline-flex items-center gap-1 rounded px-1 py-0.5 hover:bg-surface-muted",
           path === "" && "font-medium text-ink",
         )}
         title="Project root"
@@ -415,7 +415,7 @@ function Breadcrumb({
                 onJump(upTo);
               }}
               className={clsx(
-                "max-w-[120px] truncate rounded px-1 py-0.5 hover:bg-black/5",
+                "max-w-[120px] truncate rounded px-1 py-0.5 hover:bg-surface-muted",
                 isLast && "font-medium text-ink",
               )}
               title={upTo}

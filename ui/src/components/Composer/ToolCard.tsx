@@ -91,8 +91,8 @@ export function ComposerToolCard({ tool, result }: Props) {
   return (
     <div
       className={clsx(
-        "rounded-md border bg-white text-[12px]",
-        isError ? "border-red-200" : "border-black/10",
+        "rounded-md border bg-surface text-[12px]",
+        isError ? "border-red-200" : "border-border-strong",
       )}
     >
       <button
@@ -126,7 +126,7 @@ export function ComposerToolCard({ tool, result }: Props) {
       </button>
 
       {open && (
-        <div className="border-t border-black/5 px-2.5 py-2 text-[11.5px]">
+        <div className="border-t border-border px-2.5 py-2 text-[11.5px]">
           {meta.body}
           {result && <ToolResultBlock result={result} />}
         </div>
@@ -347,8 +347,8 @@ function ToolResultBlock({ result }: { result: ToolResult }) {
   const visible = lines.slice(0, 40).join("\n");
   const overflow = lines.length - 40;
   return (
-    <details className="mt-2 rounded border border-black/5 bg-gray-50">
-      <summary className="cursor-pointer px-2 py-1 font-mono text-[10.5px] uppercase tracking-wide text-ink-subtle">
+    <details className="mt-2 rounded border border-border bg-gray-50">
+      <summary className="cursor-pointer px-2 py-1 font-mono text-[10.5px] uppercase text-ink-subtle">
         result {result.is_error && <span className="text-red-700">(error)</span>}
       </summary>
       <pre

@@ -87,7 +87,7 @@ const ROLE_STYLE: Record<
   { dot: string; label: string; text: string }
 > = {
   worker: { dot: "bg-emerald-500", label: "worker", text: "text-emerald-700" },
-  reviewer: { dot: "bg-violet-500", label: "reviewer", text: "text-violet-700" },
+  reviewer: { dot: "bg-amber-500", label: "reviewer", text: "text-amber-700" },
   merger: { dot: "bg-blue-500", label: "merger", text: "text-blue-700" },
 };
 
@@ -255,7 +255,7 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       {/* Stage picker + status chip */}
-      <div className="flex max-h-24 shrink-0 items-start gap-2 overflow-y-auto rounded-md border border-black/5 bg-white p-1.5 text-[11px]">
+      <div className="flex max-h-24 shrink-0 items-start gap-2 overflow-y-auto rounded-md border border-border bg-surface p-1.5 text-[11px]">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           {stages.map((s) => {
             const k = stageKey(s);
@@ -271,7 +271,7 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
                   "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono transition-colors",
                   active
                     ? "border-ink bg-ink text-white"
-                    : "border-black/10 bg-white text-ink-muted hover:bg-black/5",
+                    : "border-border-strong bg-surface text-ink-muted hover:bg-surface-muted",
                 )}
                 title={`Started ${s.started_at}`}
               >
@@ -311,7 +311,7 @@ export function CardTranscriptView({ cardId, stages, cardStatus }: Props) {
         ref={scrollerRef}
         onScroll={onScroll}
         tabIndex={0}
-        className="min-h-[320px] flex-1 overflow-y-auto rounded-md border border-black/5 bg-[var(--bg-muted,#fafafa)] px-3 py-3 focus:outline-none"
+        className="min-h-[320px] flex-1 overflow-y-auto rounded-md border border-border bg-[var(--bg-muted,#fafafa)] px-3 py-3 focus:outline-none"
       >
         {error && (
           <div className="mb-2 rounded bg-red-50 px-2 py-1 text-[11.5px] text-red-800 ring-1 ring-inset ring-red-200">
@@ -432,10 +432,10 @@ function TranscriptRow({
           "rounded-md border bg-gray-50 px-2.5 py-1.5 font-mono text-[11px]",
           tool_result.is_error
             ? "border-red-200 text-red-900"
-            : "border-black/10 text-ink",
+            : "border-border-strong text-ink",
         )}
       >
-        <div className="mb-1 text-[10.5px] uppercase tracking-wide text-ink-subtle">
+        <div className="mb-1 text-[10.5px] uppercase text-ink-subtle">
           result {tool_result.is_error && "(error)"}
         </div>
         <pre className="max-h-56 overflow-auto whitespace-pre-wrap leading-snug">
@@ -449,7 +449,7 @@ function TranscriptRow({
   if (role === "assistant" && text) {
     return (
       <div className="group relative flex flex-col">
-        <div className="max-w-full rounded-lg bg-white px-3 py-2 text-ink ring-1 ring-inset ring-black/5">
+        <div className="max-w-full rounded-lg bg-surface px-3 py-2 text-ink ring-1 ring-inset ring-border">
           <Markdown cardId={cardId}>{text}</Markdown>
         </div>
         {usage && (usage.input_tokens > 0 || usage.output_tokens > 0) && (
@@ -518,8 +518,8 @@ function ReadOnlyToolCard({
   return (
     <div
       className={clsx(
-        "rounded-md border bg-white text-[12px]",
-        isError ? "border-red-200" : "border-black/10",
+        "rounded-md border bg-surface text-[12px]",
+        isError ? "border-red-200" : "border-border-strong",
       )}
     >
       <button
@@ -552,7 +552,7 @@ function ReadOnlyToolCard({
         )}
       </button>
       {open && (
-        <div className="border-t border-black/5 px-2.5 py-2 text-[11.5px]">
+        <div className="border-t border-border px-2.5 py-2 text-[11.5px]">
           {meta.body}
           {result && <ToolResultBlock result={result} />}
         </div>
@@ -780,8 +780,8 @@ function ToolResultBlock({ result }: { result: ToolResultShape }) {
   const visible = lines.slice(0, 40).join("\n");
   const overflow = lines.length - 40;
   return (
-    <details className="mt-2 rounded border border-black/5 bg-gray-50">
-      <summary className="cursor-pointer px-2 py-1 font-mono text-[10.5px] uppercase tracking-wide text-ink-subtle">
+    <details className="mt-2 rounded border border-border bg-gray-50">
+      <summary className="cursor-pointer px-2 py-1 font-mono text-[10.5px] uppercase text-ink-subtle">
         result {result.is_error && <span className="text-red-700">(error)</span>}
       </summary>
       <pre
