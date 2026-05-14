@@ -405,7 +405,9 @@ export const NotificationEvent = z.enum([
 export type NotificationEvent = z.infer<typeof NotificationEvent>;
 
 export const NotificationsConfig = z.object({
-  events: z.array(NotificationEvent).default([]),
+  events: z
+    .array(NotificationEvent)
+    .default(["card_stuck", "review_requested", "merge_done", "helper_crashed"]),
 });
 export type NotificationsConfig = z.infer<typeof NotificationsConfig>;
 

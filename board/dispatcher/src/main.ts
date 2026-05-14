@@ -22,6 +22,7 @@ import { openReadOnlyDb } from "./db.js";
 import { ServerApi } from "./api.js";
 import { spawnWorker, spawnReviewer, spawnMerger, type SpawnedWorker } from "./spawn.js";
 import {
+  countRunningByStatus,
   countRunningWorkers,
   isAnyMergerActive,
   nextMergeable,
@@ -34,7 +35,7 @@ import { readBaseBranch } from "./context.js";
 import { HeartbeatWatchdog } from "./heartbeat.js";
 import { StatsReporter } from "./stats.js";
 import { reapOrphans } from "./recovery.js";
-import { killCard } from "./kill.js";
+import { killCard, killWorker } from "./kill.js";
 
 // loadConfig() handles env discovery from .questboard/.env,
 // package-local .env fallback, or cwd .env.
@@ -120,6 +121,8 @@ const watchdog = new HeartbeatWatchdog({
   active,
   heartbeatTimeoutSec: cfg.heartbeatTimeoutSec,
   killGraceMs: cfg.killGraceMs,
+  db,
+  cardsDir: cfg.cardsDir,
 });
 watchdog.start();
 
@@ -175,9 +178,12 @@ async function trySpawnRound(reason: string): Promise<void> {
     const cap = live.concurrency_limit;
     void countRunningWorkers; // (kept for the recovery / stats path)
 
-    const workerSlots = cap - countActive("worker");
-    const reviewerSlots = cap - countActive("reviewer");
-    const mergerSlots = cap - countActive("merger");
+    const workerSlots =
+      cap - Math.max(countRunningByStatus(db, "in_progress"), countActive("worker"));
+    const reviewerSlots =
+      cap - Math.max(countRunningByStatus(db, "ai_review"), countActive("reviewer"));
+    const mergerSlots =
+      cap - Math.max(countRunningByStatus(db, "merging"), countActive("merger"));
 
     // ── Round 1: ready cards → workers ─────────────────────────────────
     // Includes 3-strikes-revive cards (status=in_progress, no workers row),
@@ -209,7 +215,13 @@ async function trySpawnRound(reason: string): Promise<void> {
           worktree: path.relative(cfg.boardRoot, worker.worktreePath),
           transcript: path.relative(cfg.boardRoot, worker.transcriptPath),
         });
-        api.claimForWorker(card.id, worker.pid, worker.attempt).catch((err) => {
+        api.claimForWorker(
+          card.id,
+          worker.pid,
+          worker.attempt,
+          path.relative(cfg.boardRoot, worker.worktreePath),
+          worker.wipBranch,
+        ).catch((err) => {
           logger.log({
             event: "claim_failed",
             card_id: card.id,
@@ -217,6 +229,12 @@ async function trySpawnRound(reason: string): Promise<void> {
             attempt: worker.attempt,
             message: err instanceof Error ? err.message : String(err),
           });
+          active.delete(card.id);
+          void killWorker(
+            worker,
+            { graceMs: cfg.killGraceMs, expectedStartedAt: worker.startedAt },
+            logger,
+          );
         });
       } catch (err) {
         justSpawned.delete(card.id);
@@ -254,6 +272,12 @@ async function trySpawnRound(reason: string): Promise<void> {
               pid: reviewer.pid,
               message: err instanceof Error ? err.message : String(err),
             });
+            active.delete(card.id);
+            void killWorker(
+              reviewer,
+              { graceMs: cfg.killGraceMs, expectedStartedAt: reviewer.startedAt },
+              logger,
+            );
           });
         } catch (err) {
           justSpawned.delete(card.id);
@@ -365,6 +389,12 @@ async function trySpawnRound(reason: string): Promise<void> {
                 pid: merger.pid,
                 message: err instanceof Error ? err.message : String(err),
               });
+              active.delete(card.id);
+              void killWorker(
+                merger,
+                { graceMs: cfg.killGraceMs, expectedStartedAt: merger.startedAt },
+                logger,
+              );
             });
           } catch (err) {
             justSpawned.delete(card.id);

@@ -73,7 +73,7 @@ npx questboard stop
 ```text
 your-repo/
   .questboard/
-    .env                # ports, concurrency, auth mode, paths
+    .env                # ports, auth availability, runtime paths
     config.json         # live board config
     data/
       cards/            # one card directory per task

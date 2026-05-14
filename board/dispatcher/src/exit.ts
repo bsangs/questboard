@@ -88,18 +88,28 @@ async function runGitBestEffort(
 async function resetLocalMainAfterMergerExit(
   worker: SpawnedWorker,
   logger: Logger,
+  baseBranch?: string | null,
 ): Promise<void> {
   if (worker.role !== "merger") return;
   const cwd = worker.worktreePath; // = cfg.boardRoot for mergers
+  const branch = baseBranch ?? "main";
+  const remoteRef = `origin/${branch}`;
+  const remoteExists = await runGitBestEffort(
+    cwd,
+    ["rev-parse", "--verify", "--quiet", remoteRef],
+    logger,
+    worker.cardId,
+  );
+  const resetRef = remoteExists.ok ? remoteRef : branch;
 
   // 1. If a merge is mid-flight (no commit formed yet), abort it. No-op
   //    when there's no merge in progress; the helper logs and ignores.
   await runGitBestEffort(cwd, ["merge", "--abort"], logger, worker.cardId);
 
-  // 2. Hard-reset if local main has un-pushed commits ahead of origin/main.
+  // 2. Hard-reset if local base has un-pushed commits ahead of the configured base ref.
   const aheadRes = await runGitBestEffort(
     cwd,
-    ["rev-list", "--count", "origin/main..HEAD"],
+    ["rev-list", "--count", `${resetRef}..HEAD`],
     logger,
     worker.cardId,
   );
@@ -107,7 +117,7 @@ async function resetLocalMainAfterMergerExit(
   if (ahead > 0) {
     const reset = await runGitBestEffort(
       cwd,
-      ["reset", "--hard", "origin/main"],
+      ["reset", "--hard", resetRef],
       logger,
       worker.cardId,
     );
@@ -308,7 +318,7 @@ async function maybeRouteStuck(
   // respawn or the server's ff-merge pre-attempt on the next round —
   // starts from a clean tree. Best-effort.
   if (worker.role === "merger") {
-    await resetLocalMainAfterMergerExit(worker, deps.logger);
+    await resetLocalMainAfterMergerExit(worker, deps.logger, deps.baseBranch);
   }
 
   try {
@@ -487,7 +497,7 @@ async function routeExit(
     // main with an un-pushed merge commit or a partially-resolved merge.
     // Reset to origin/main before the server transitions the card back to
     // in_progress — the next worker shouldn't inherit dirty state.
-    await resetLocalMainAfterMergerExit(worker, logger);
+    await resetLocalMainAfterMergerExit(worker, logger, deps.baseBranch);
     try {
       await api.mergerFailed(worker.cardId, reason);
       logger.log({ event: "merger_failed", card_id: worker.cardId, pid: worker.pid, reason });

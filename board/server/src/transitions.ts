@@ -629,6 +629,12 @@ export async function approveToMerging(id: string, by: "human" | "reviewer"): Pr
     after: next,
     history: [ev],
     sse: [statusEvent(id, from, "merging"), historyEvent(id, ev)],
+    alerts: [
+      () => alertCard("merge_started", { id, title: card.frontmatter.title, language: card.frontmatter.language }),
+      ...(by === "reviewer"
+        ? [() => alertCard("review_passed", { id, title: card.frontmatter.title, language: card.frontmatter.language })]
+        : []),
+    ],
   });
   return next;
 }
@@ -750,6 +756,15 @@ export async function mergerFailed(id: string, reason: string): Promise<Card> {
       commentEvent(id, mergerNote),
       historyEvent(id, note),
       historyEvent(id, ev),
+    ],
+    alerts: [
+      () =>
+        alertCard("merge_failed", {
+          id,
+          title: card.frontmatter.title,
+          language: card.frontmatter.language,
+          stuck_reason: reason,
+        }),
     ],
   });
   return next;
@@ -964,6 +979,15 @@ export async function reviewerReject(id: string, body: string): Promise<Card> {
     comments: [note],
     history: [ev],
     sse: [statusEvent(id, "ai_review", "in_progress"), commentEvent(id, note), historyEvent(id, ev)],
+    alerts: [
+      () =>
+        alertCard("review_rejected", {
+          id,
+          title: card.frontmatter.title,
+          language: card.frontmatter.language,
+          stuck_reason: body,
+        }),
+    ],
   });
   return next;
 }
@@ -1003,6 +1027,14 @@ export async function cancelCard(id: string, reason?: string): Promise<Card> {
       // without having to inspect every status_changed payload.
       { type: "card_cancel_requested", card_id: id },
       historyEvent(id, ev),
+    ],
+    alerts: [
+      () =>
+        alertCard("card_cancelled", {
+          id,
+          title: card.frontmatter.title,
+          language: card.frontmatter.language,
+        }),
     ],
   });
 
@@ -1111,6 +1143,14 @@ export async function recordHelperDeath(
       sqlSideEffects: () => {
         db.prepare("DELETE FROM workers WHERE card_id = ?").run(id);
       },
+      alerts: [
+        () =>
+          alertCard("card_cancelled", {
+            id,
+            title: card.frontmatter.title,
+            language: card.frontmatter.language,
+          }),
+      ],
     });
     // Best-effort worktree cleanup, same as cancelCard.
     const { cleanupWorktree } = await import("./git.js");

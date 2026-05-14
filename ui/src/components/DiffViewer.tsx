@@ -19,6 +19,7 @@ import {
   useState,
 } from "react";
 import { getDiff } from "@/lib/api";
+import { useBoard } from "@/lib/state";
 import type { CardDiff } from "@/lib/types";
 
 /**
@@ -231,6 +232,7 @@ export function DiffViewer({ cardId }: { cardId: string }) {
   const [diff, setDiff] = useState<CardDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const baseBranch = useBoard((s) => s.config?.git?.base_branch ?? "main");
 
   useEffect(() => {
     let alive = true;
@@ -364,7 +366,7 @@ export function DiffViewer({ cardId }: { cardId: string }) {
   const emptyDiffMessage = (
     <div className="rounded-md border border-dashed border-border-strong bg-surface p-6 text-center text-[12.5px] text-ink-subtle">
       No diff yet. The worker hasn&apos;t made any changes against{" "}
-      <span className="font-mono">origin/main</span>.
+      <span className="font-mono">{baseBranch}</span>.
     </div>
   );
 

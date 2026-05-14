@@ -195,7 +195,13 @@ export const useBoard = create<State>((set, get) => ({
   removeCard: (id) =>
     set((s) => {
       const { [id]: _gone, ...rest } = s.cards;
-      return { cards: rest };
+      const selected = new Set(s.selected);
+      selected.delete(id);
+      return {
+        cards: rest,
+        selected,
+        drawerCardId: s.drawerCardId === id ? null : s.drawerCardId,
+      };
     }),
 
   patchCard: (id, patch) =>

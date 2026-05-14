@@ -40,11 +40,12 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { z } from "zod";
 import { env } from "../env.js";
+import { getConfig } from "../config.js";
 
 /** Names that should never appear in the dropdown — saves the user a
  *  click and matches what `.gitignore` would normally hide. Matched
  *  against entry name only (not full path). */
-const HIDDEN_NAMES = new Set<string>([
+const FALLBACK_HIDDEN_NAMES = [
   "node_modules",
   ".git",
   ".next",
@@ -54,7 +55,15 @@ const HIDDEN_NAMES = new Set<string>([
   ".cache",
   ".tmp",
   ".DS_Store",
-]);
+];
+
+function hiddenNames(): Set<string> {
+  try {
+    return new Set([...getConfig().files.hidden_names, ".DS_Store"]);
+  } catch {
+    return new Set(FALLBACK_HIDDEN_NAMES);
+  }
+}
 
 const Query = z.object({
   // `path` is optional with default "" (= BOARD_ROOT). Strip leading
@@ -173,12 +182,13 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
 
     const needle = q.trim().toLowerCase();
     const entries: Entry[] = [];
+    const hidden = hiddenNames();
     for (const d of dirents) {
-      if (HIDDEN_NAMES.has(d.name)) continue;
+      if (hidden.has(d.name)) continue;
       // We don't show dotfiles by default — they're rarely the target
       // of a mention and tend to clutter the picker. The hidden-names
       // set already covers the common ones; this is the catch-all.
-      if (d.name.startsWith(".") && !HIDDEN_NAMES.has(d.name)) {
+      if (d.name.startsWith(".") && !hidden.has(d.name)) {
         // But .env-style files at the root may matter; we still show
         // anything that doesn't match HIDDEN_NAMES. Keep this branch
         // intentionally permissive — only the explicit denylist hides.

@@ -24,7 +24,7 @@
  * `BOARD_ROOT=` line cannot silently anchor paths to the process cwd.
  */
 import { config as loadDotenv } from "dotenv";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 
@@ -113,8 +113,26 @@ const BOARD_ROOT = resolve(req("BOARD_ROOT", located.projectRoot));
 const BOARD_DATA_REL = envValue("BOARD_DATA") ?? ".questboard/data";
 const BOARD_WORKTREES_REL = envValue("BOARD_WORKTREES") ?? ".questboard/worktrees";
 
-const BOARD_DATA = resolve(BOARD_ROOT, BOARD_DATA_REL);
-const BOARD_WORKTREES = resolve(BOARD_ROOT, BOARD_WORKTREES_REL);
+function resolveInsideBoardRoot(name: string, value: string): string {
+  const abs = isAbsolute(value) ? resolve(value) : resolve(BOARD_ROOT, value);
+  const rel = relative(BOARD_ROOT, abs);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`[server] ${name} must stay inside BOARD_ROOT (${BOARD_ROOT})`);
+  }
+  return abs;
+}
+
+function parsePort(name: string, fallback: number): number {
+  const raw = envValue(name);
+  const value = raw == null ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`[server] ${name} must be an integer port between 1 and 65535`);
+  }
+  return value;
+}
+
+const BOARD_DATA = resolveInsideBoardRoot("BOARD_DATA", BOARD_DATA_REL);
+const BOARD_WORKTREES = resolveInsideBoardRoot("BOARD_WORKTREES", BOARD_WORKTREES_REL);
 
 /**
  * Parse BOARD_CORS_ALLOWED_ORIGINS — a comma-separated allowlist of
@@ -145,8 +163,8 @@ function parseExtraOrigins(): string[] {
   return items;
 }
 
-const BOARD_SERVER_PORT = Number(envValue("BOARD_SERVER_PORT") ?? 3031);
-const BOARD_UI_PORT = Number(envValue("BOARD_UI_PORT") ?? 3030);
+const BOARD_SERVER_PORT = parsePort("BOARD_SERVER_PORT", 3031);
+const BOARD_UI_PORT = parsePort("BOARD_UI_PORT", 3030);
 const BOARD_BASE_BRANCH = envValue("BOARD_BASE_BRANCH") ?? null;
 const CORS_EXTRA_ORIGINS = parseExtraOrigins();
 const CORS_ORIGINS = [

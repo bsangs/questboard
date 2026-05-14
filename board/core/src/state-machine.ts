@@ -70,6 +70,10 @@ export const TRANSITIONS: ReadonlyArray<Transition> = [
   // direct-merge fallback paths if any remain).
   { id: "T6.4-h", from: "human_review", to: "in_progress", trigger: "server" },
   { id: "T6.4-a", from: "ai_review", to: "in_progress", trigger: "server" },
+
+  // Worker branch already contains no remaining diff against the base branch.
+  // The dispatcher can mark it done without going through review/merge.
+  { id: "T-no-diff", from: "in_progress", to: "done", trigger: "dispatcher" },
 ];
 
 export const ALL_NON_CANCELLED_STATES: ReadonlyArray<CardStatus> = [

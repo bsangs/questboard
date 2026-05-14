@@ -6,6 +6,7 @@ import { env } from "./env.js";
 import { logger } from "./logger.js";
 import { getConfig } from "./config.js";
 import { telegramEnabled as flagTelegramEnabled } from "./telegram-flag.js";
+import type { NotificationEvent } from "@questboard/core";
 
 const MD_V2_ESCAPE = /([_*[\]()~`>#+\-=|{}.!\\])/g;
 function escapeMdV2(s: string): string {
@@ -65,7 +66,28 @@ export { telegramEnabled } from "./telegram-flag.js";
 
 // ─── Localized templates ─────────────────────────────────────────────────────
 
-type AlertKind = "stuck" | "human_review" | "done" | "worker_failed";
+type AlertKind =
+  | "stuck"
+  | "human_review"
+  | "done"
+  | "worker_failed"
+  | "review_passed"
+  | "review_rejected"
+  | "merge_started"
+  | "merge_failed"
+  | "card_cancelled";
+
+const ALERT_EVENT: Record<AlertKind, NotificationEvent> = {
+  stuck: "card_stuck",
+  human_review: "review_requested",
+  done: "merge_done",
+  worker_failed: "helper_crashed",
+  review_passed: "review_passed",
+  review_rejected: "review_rejected",
+  merge_started: "merge_started",
+  merge_failed: "merge_failed",
+  card_cancelled: "card_cancelled",
+};
 
 interface Card {
   id: string;
@@ -94,6 +116,12 @@ const TEMPLATES = {
     done: (c: Card) => `✅ ${head(c, true)} \\- merged`,
     worker_failed: (c: Card) =>
       `🔴 ${head(c, true)} \\- 워커 실패 \\(${escapeMdV2(c.stuck_reason ?? "unknown")}\\)`,
+    review_passed: (c: Card) => `🟢 ${head(c, true)} \\- AI 리뷰 통과`,
+    review_rejected: (c: Card) => `🟠 ${head(c, true)} \\- AI 리뷰 반려`,
+    merge_started: (c: Card) => `🔵 ${head(c, true)} \\- merge 시작`,
+    merge_failed: (c: Card) =>
+      `🔴 ${head(c, true)} \\- merge 실패 \\(${escapeMdV2(c.stuck_reason ?? "unknown")}\\)`,
+    card_cancelled: (c: Card) => `⚪ ${head(c, true)} \\- cancelled`,
   },
   en: {
     stuck: (c: Card) => `🟡 ${head(c, false)} \\- stuck${
@@ -103,10 +131,30 @@ const TEMPLATES = {
     done: (c: Card) => `✅ ${head(c, false)} \\- merged`,
     worker_failed: (c: Card) =>
       `🔴 ${head(c, false)} \\- worker failed \\(${escapeMdV2(c.stuck_reason ?? "unknown")}\\)`,
+    review_passed: (c: Card) => `🟢 ${head(c, false)} \\- AI review passed`,
+    review_rejected: (c: Card) => `🟠 ${head(c, false)} \\- AI review rejected`,
+    merge_started: (c: Card) => `🔵 ${head(c, false)} \\- merge started`,
+    merge_failed: (c: Card) =>
+      `🔴 ${head(c, false)} \\- merge failed \\(${escapeMdV2(c.stuck_reason ?? "unknown")}\\)`,
+    card_cancelled: (c: Card) => `⚪ ${head(c, false)} \\- cancelled`,
   },
 } as const;
 
 export async function alertCard(kind: AlertKind, card: Card): Promise<void> {
+  try {
+    const cfg = getConfig();
+    if (!cfg.notifications.events.includes(ALERT_EVENT[kind])) {
+      logger.debug("telegram_skipped", {
+        reason: "notification_event_disabled",
+        kind,
+        card_id: card.id,
+      });
+      return;
+    }
+  } catch {
+    /* if config can't be read, fall through and send */
+  }
+
   // Suppress human_review alerts when auto_review is on — the reviewer
   // handles it without human attention. Other alerts still fire.
   if (kind === "human_review") {

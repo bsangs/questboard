@@ -131,6 +131,28 @@ function findAppRoot(here: string): string {
   return found ?? path.resolve(here, "..", "..", "..");
 }
 
+function resolveInsideBoardRoot(
+  boardRoot: string,
+  name: string,
+  value: string,
+): string {
+  const abs = path.isAbsolute(value) ? path.resolve(value) : path.resolve(boardRoot, value);
+  const rel = path.relative(boardRoot, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`[dispatcher] ${name} must stay inside BOARD_ROOT (${boardRoot})`);
+  }
+  return abs;
+}
+
+function parsePort(name: string, fallback: number): number {
+  const raw = envValue(name);
+  const value = raw == null ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`[dispatcher] ${name} must be an integer port between 1 and 65535`);
+  }
+  return value;
+}
+
 export function loadConfig(): DispatcherConfig {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const located = ensureEnvLoaded(here);
@@ -138,15 +160,11 @@ export function loadConfig(): DispatcherConfig {
 
   const boardRoot = path.resolve(envValue("BOARD_ROOT") ?? located.projectRoot);
   const boardDataRel = envValue("BOARD_DATA") ?? ".questboard/data";
-  const boardData = path.isAbsolute(boardDataRel)
-    ? boardDataRel
-    : path.join(boardRoot, boardDataRel);
+  const boardData = resolveInsideBoardRoot(boardRoot, "BOARD_DATA", boardDataRel);
   const worktreesRel = envValue("BOARD_WORKTREES") ?? ".questboard/worktrees";
-  const worktrees = path.isAbsolute(worktreesRel)
-    ? worktreesRel
-    : path.join(boardRoot, worktreesRel);
+  const worktrees = resolveInsideBoardRoot(boardRoot, "BOARD_WORKTREES", worktreesRel);
 
-  const serverPort = envValue("BOARD_SERVER_PORT") ?? "3031";
+  const serverPort = parsePort("BOARD_SERVER_PORT", 3031);
   const serverUrl = envValue("BOARD_SERVER_URL") ?? `http://localhost:${serverPort}`;
 
   const promptsDir = path.join(appRoot, "board", "prompts");

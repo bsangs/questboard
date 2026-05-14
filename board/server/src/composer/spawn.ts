@@ -49,6 +49,7 @@ import { readFileSync } from "node:fs";
 import {
   buildToolGuidanceSection,
   ComposerMessage,
+  renderTemplate,
   type ComposerMessage as ComposerMessageT,
   type ComposerThreadSummary,
 } from "@questboard/core";
@@ -68,6 +69,12 @@ import { mcpConfigPathFor } from "./mcp.js";
 import { generateThreadTitle } from "./title.js";
 
 export const IDLE_MS = 5 * 60_000;
+
+interface ComposerAuth {
+  bare: boolean;
+  anthropicBaseUrl: string | null;
+  anthropicApiKey: string | null;
+}
 
 // ─── Live process map ────────────────────────────────────────────────────────
 
@@ -152,11 +159,55 @@ function resetIdleTimer(p: LiveProc): void {
 
 // ─── Worktree lazy provisioning ──────────────────────────────────────────────
 
+function safeRelativeTemplate(template: string, values: Record<string, string>): string {
+  const rendered = renderTemplate(template, values).replace(/\\/g, "/");
+  const parts = rendered.split("/");
+  if (
+    rendered.trim() === "" ||
+    rendered.startsWith("/") ||
+    parts.some((part) => part === "..")
+  ) {
+    throw new Error(`template rendered outside worktree root: ${rendered}`);
+  }
+  return rendered;
+}
+
 export function composerWorktreePath(threadId: string): string {
-  return join(env.BOARD_WORKTREES, `composer-${threadId}`);
+  return join(
+    env.BOARD_WORKTREES,
+    safeRelativeTemplate(getConfig().git.composer_worktree_template, {
+      thread_id: threadId,
+    }),
+  );
 }
 function composerBranch(threadId: string): string {
   return `composer/thread-${threadId}`;
+}
+
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runGit(cwd, ["rev-parse", "--verify", "--quiet", ref]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function baseRef(cwd: string): Promise<string> {
+  const branch = getConfig().git.base_branch;
+  for (const ref of [`origin/${branch}`, branch]) {
+    if (await refExists(cwd, ref)) return ref;
+  }
+  return "HEAD";
+}
+
+async function fetchBaseBestEffort(): Promise<void> {
+  const branch = getConfig().git.base_branch;
+  try {
+    await gitMain(["fetch", "origin", branch]);
+  } catch (err) {
+    logger.debug("composer_fetch_base_skipped", { branch, err: String(err) });
+  }
 }
 
 /**
@@ -174,11 +225,8 @@ export async function computeBehindMain(threadId: string): Promise<number | null
   const wt = composerWorktreePath(threadId);
   if (!existsSync(wt)) return null;
   try {
-    const { stdout } = await runGit(wt, [
-      "rev-list",
-      "--count",
-      "HEAD..origin/main",
-    ]);
+    const ref = await baseRef(wt);
+    const { stdout } = await runGit(wt, ["rev-list", "--count", `HEAD..${ref}`]);
     const n = Number.parseInt(stdout.trim(), 10);
     return Number.isFinite(n) && n >= 0 ? n : null;
   } catch (err) {
@@ -213,17 +261,15 @@ export async function syncWorktreeToMain(
       code: "worktree_missing",
     });
   }
-  // Step 1: refresh origin/main from BOARD_ROOT (the worktree shares
-  // the same .git/ via worktree linkage, so the fetched ref is visible
-  // inside the worktree too).
-  await gitMain(["fetch", "origin", "main"]);
+  await fetchBaseBestEffort();
+  const ref = await baseRef(wt);
   // Step 2: capture HEAD before — used to compute the diff range and to
   // include a short SHA in the transcript marker.
   const before = (await runGit(wt, ["rev-parse", "HEAD"])).stdout.trim();
-  // Step 3: hard-reset to origin/main. This nukes any uncommitted edits
+  // Step 3: hard-reset to the configured base ref. This nukes any uncommitted edits
   // in the worktree, which is the intended UX — sync is a "throw away
   // local scratch and start fresh from main" affordance.
-  await runGit(wt, ["reset", "--hard", "origin/main"]);
+  await runGit(wt, ["reset", "--hard", ref]);
   // Step 4: HEAD after, plus the count of commits added (i.e. how many
   // commits main moved forward by since the worktree was last synced).
   const after = (await runGit(wt, ["rev-parse", "HEAD"])).stdout.trim();
@@ -260,7 +306,8 @@ async function ensureWorktree(threadId: string): Promise<string> {
   } catch {
     // Branch likely doesn't exist; that's the happy path.
   }
-  await gitMain(["worktree", "add", wt, "-b", branch]);
+  await fetchBaseBestEffort();
+  await gitMain(["worktree", "add", wt, "-b", branch, await baseRef(env.BOARD_ROOT)]);
   // Symlink the thread's attachments dir into the worktree so claude can
   // resolve the `attachments/<name>` paths the user pastes in markdown.
   // The UI rewrites `attachments/foo.png` → `/api/composer/threads/<id>/attachments/foo.png`
@@ -332,6 +379,28 @@ const COMPOSER_ALLOWED_TOOLS = [
   "mcp__composer__save_plan",
 ] as const;
 
+function composerAuth(): ComposerAuth {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim() || null;
+  const baseUrl = process.env.ANTHROPIC_BASE_URL?.trim() || null;
+  const bare = !!apiKey && !!getConfig().auth.bare_enabled;
+  return {
+    bare,
+    anthropicApiKey: bare ? apiKey : null,
+    anthropicBaseUrl: bare ? baseUrl : null,
+  };
+}
+
+function composerProcessEnv(auth: ComposerAuth): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...process.env };
+  delete out.ANTHROPIC_API_KEY;
+  delete out.ANTHROPIC_BASE_URL;
+  if (auth.bare) {
+    if (auth.anthropicApiKey != null) out.ANTHROPIC_API_KEY = auth.anthropicApiKey;
+    if (auth.anthropicBaseUrl != null) out.ANTHROPIC_BASE_URL = auth.anthropicBaseUrl;
+  }
+  return out;
+}
+
 function readToolGuidance(): string {
   const guidanceByTool: Record<string, string> = {};
   for (const tool of COMPOSER_ALLOWED_TOOLS) {
@@ -392,10 +461,11 @@ async function spawnProc(
   const mcpConfig = mcpConfigPathFor(threadId);
   const systemPrompt = readSystemPrompt();
   const resumeSessionId = opts?.resumeSessionId ?? null;
+  const auth = composerAuth();
 
   const args = [
     "--print",
-    "--bare",
+    ...(auth.bare ? ["--bare"] : []),
     "--input-format",
     "stream-json",
     "--output-format",
@@ -438,7 +508,7 @@ async function spawnProc(
     cwd: spawnCwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: {
-      ...process.env,
+      ...composerProcessEnv(auth),
       BOARD_ROOT: env.BOARD_ROOT,
       BOARD_DATA: env.BOARD_DATA,
       COMPOSER_THREAD_ID: threadId,

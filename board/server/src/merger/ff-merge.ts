@@ -17,16 +17,28 @@
  * the merge.
  */
 import { execFile } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { env } from "../env.js";
 import { getConfig } from "../config.js";
 import { logger } from "../logger.js";
-import { gitMain, workerBranchFor } from "../git.js";
+import { gitMain, workerBranchFor, worktreePathFor } from "../git.js";
 import { mergerComplete } from "../transitions.js";
 import { runCommandHook } from "../util/hooks.js";
+import { readSecret } from "../secrets.js";
 import type { MergeCommandStep, MergeCommandsConfig } from "@questboard/core";
 
 const execFileP = promisify(execFile);
+const LOCK_PATH = join(env.BOARD_DATA, "locks", "ff-merge.lock");
 
 export type TryFfMergeResult =
   | { ok: true; merged_sha: string; status: string; ran: string[] }
@@ -46,10 +58,62 @@ let inflight: Promise<TryFfMergeResult> | null = null;
  */
 export function tryFfMerge(cardId: string): Promise<TryFfMergeResult> {
   if (inflight) return inflight;
+  if (!acquireLock(cardId)) {
+    return Promise.resolve({
+      ok: false,
+      reason: "another ff-merge is already in progress",
+      fallback_to_merger: false,
+      ran: [],
+    });
+  }
   inflight = doFfMerge(cardId).finally(() => {
     inflight = null;
+    releaseLock();
   });
   return inflight;
+}
+
+function acquireLock(cardId: string): boolean {
+  mkdirSync(dirname(LOCK_PATH), { recursive: true });
+  try {
+    const fd = openSync(LOCK_PATH, "wx");
+    try {
+      writeFileSync(fd, JSON.stringify({ pid: process.pid, cardId, ts: new Date().toISOString() }));
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST") throw err;
+    if (lockOwnerAlive()) return false;
+    try {
+      rmSync(LOCK_PATH, { force: true });
+    } catch {
+      return false;
+    }
+    return acquireLock(cardId);
+  }
+}
+
+function lockOwnerAlive(): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as { pid?: unknown };
+    const pid = typeof raw.pid === "number" ? raw.pid : null;
+    if (pid == null) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function releaseLock(): void {
+  try {
+    rmSync(LOCK_PATH, { force: true });
+  } catch {
+    /* best-effort */
+  }
 }
 
 async function doFfMerge(cardId: string): Promise<TryFfMergeResult> {
@@ -212,7 +276,7 @@ function renderCommand(
     .replaceAll("{base_branch}", vars.baseBranch)
     .replaceAll("{wip_branch}", vars.branch)
     .replaceAll("{card_id}", vars.cardId)
-    .replaceAll("{worktree_path}", `${env.BOARD_WORKTREES}/card-${vars.cardId}`);
+    .replaceAll("{worktree_path}", worktreePathFor(vars.cardId));
 }
 
 async function runMergeCommand(args: {
@@ -248,6 +312,7 @@ async function runMergeCommand(args: {
       maxBuffer: 32 * 1024 * 1024,
       env: {
         ...process.env,
+        ...configuredEnvironment(),
         GIT_TERMINAL_PROMPT: "0",
         BOARD_ROOT: env.BOARD_ROOT,
         BASE_BRANCH: args.baseBranch,
@@ -261,6 +326,24 @@ async function runMergeCommand(args: {
     const detail = (e.stderr || e.stdout || e.message || String(err)).trim();
     throw new Error(`${args.step.label} exited: ${detail}`);
   }
+}
+
+function configuredEnvironment(): Record<string, string> {
+  const cfg = getConfig();
+  const out: Record<string, string> = {};
+  for (const item of cfg.environment.env) out[item.name] = item.value;
+  for (const item of cfg.environment.secret_env) {
+    try {
+      const value = readSecret(item.secret_ref);
+      if (value != null) out[item.name] = value;
+    } catch (err) {
+      logger.warn("ff_merge_secret_env_failed", {
+        name: item.name,
+        err: msg(err),
+      });
+    }
+  }
+  return out;
 }
 
 function msg(e: unknown): string {

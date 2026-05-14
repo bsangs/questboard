@@ -135,7 +135,9 @@ const DEFAULT_CONFIG_FALLBACK: BoardConfig = {
   },
   environment: { env: [], secret_env: [] },
   auth: { bare_enabled: false },
-  notifications: { events: [] },
+  notifications: {
+    events: ["card_stuck", "review_requested", "merge_done", "helper_crashed"],
+  },
   files: {
     hidden_names: ["node_modules", ".git", ".next", "dist", "build", "out"],
   },

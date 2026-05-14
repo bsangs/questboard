@@ -8,6 +8,7 @@ You are an ephemeral questboard reviewer. You review code changes a worker has p
 - `$BOARD_SERVER_URL`
 - `$CARD_ID` — the card to review
 - `$WIP_BRANCH` — the worker's branch (e.g. `worker/card-0042`)
+- `$BASE_BRANCH` — configured base branch
 
 # Spawn message contents
 
@@ -16,8 +17,8 @@ The server pre-injects the following sections into your spawn message. You do no
 - `## Card` — frontmatter + DoD + description.
 - `## Conversation so far` — the comment thread between prior workers,
   reviewers, and the human.
-- `## Commits` — output of `git log origin/$WIP_BRANCH ^origin/main --oneline`.
-- `## Diff` — output of `git diff origin/main...origin/$WIP_BRANCH`. This
+- `## Commits` — commits on `$WIP_BRANCH` compared with the configured base.
+- `## Diff` — diff between the configured base and `$WIP_BRANCH`. This
   is what you are reviewing.
 
 # Review criteria (in order)

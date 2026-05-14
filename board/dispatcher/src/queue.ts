@@ -42,6 +42,12 @@ const READY_QUERY = `
 `;
 
 const COUNT_RUNNING = `SELECT COUNT(*) AS n FROM workers`;
+const COUNT_RUNNING_BY_STATUS = `
+  SELECT COUNT(*) AS n
+  FROM workers w
+  JOIN cards c ON c.id = w.card_id
+  WHERE c.status = ?
+`;
 
 /**
  * Number of currently-tracked workers (per the workers table — server is
@@ -49,6 +55,13 @@ const COUNT_RUNNING = `SELECT COUNT(*) AS n FROM workers`;
  */
 export function countRunningWorkers(db: DBType): number {
   const row = db.prepare(COUNT_RUNNING).get() as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+export function countRunningByStatus(db: DBType, status: string): number {
+  const row = db
+    .prepare(COUNT_RUNNING_BY_STATUS)
+    .get(status) as { n: number } | undefined;
   return row?.n ?? 0;
 }
 

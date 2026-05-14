@@ -37,7 +37,16 @@ CREATE TABLE IF NOT EXISTS cards (
   -- Cached count of conversation comments (stuck/answer/resumed/review_note/note).
   -- Maintained by appendCommentRow + recomputed at bootstrap. UI list endpoint
   -- reads this so the badge doesn't show stale 0 on initial load.
-  comment_count   INTEGER NOT NULL DEFAULT 0
+  comment_count   INTEGER NOT NULL DEFAULT 0,
+  -- Cached lifetime token totals by helper role. Existing databases add these
+  -- via lightweight migrations in board/server/src/db.ts; new databases get
+  -- the complete shape here.
+  worker_input_tokens    INTEGER NOT NULL DEFAULT 0,
+  worker_output_tokens   INTEGER NOT NULL DEFAULT 0,
+  reviewer_input_tokens  INTEGER NOT NULL DEFAULT 0,
+  reviewer_output_tokens INTEGER NOT NULL DEFAULT 0,
+  merger_input_tokens    INTEGER NOT NULL DEFAULT 0,
+  merger_output_tokens   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS comments (

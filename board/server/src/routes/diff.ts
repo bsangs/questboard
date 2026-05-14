@@ -4,6 +4,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { getCardRow } from "../db.js";
 import { diffMainTo } from "../git.js";
 
 const CardIdParam = z.object({ id: z.string().regex(/^\d{4}$/) });
@@ -37,6 +38,10 @@ export async function diffRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/cards/:id/diff", async (req, reply) => {
     try {
       const { id } = CardIdParam.parse(req.params);
+      if (!getCardRow(id)) {
+        reply.code(404).send({ error: "card_not_found", message: `card ${id} not found` });
+        return;
+      }
       const raw = await diffMainTo(id);
       reply.send({ raw, files: summarizeDiff(raw) });
     } catch (err) {

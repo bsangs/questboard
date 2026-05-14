@@ -30,6 +30,8 @@ export interface PrepareWorktreeOpts {
   cardId: string;
   /** Branch name to use, e.g. `worker/card-0042`. */
   branch: string;
+  /** Relative directory name under worktreesDir, e.g. `card-0042`. */
+  worktreeName: string;
   /** Preferred base branch, e.g. `main` or `develop`. */
   baseBranch?: string | null;
 }
@@ -93,8 +95,8 @@ export interface WorktreeHandle {
 }
 
 export async function prepareWorktree(opts: PrepareWorktreeOpts): Promise<WorktreeHandle> {
-  const { boardRoot, worktreesDir, cardId, branch, baseBranch } = opts;
-  const worktreePath = path.join(worktreesDir, `card-${cardId}`);
+  const { boardRoot, worktreesDir, cardId, branch, worktreeName, baseBranch } = opts;
+  const worktreePath = path.join(worktreesDir, worktreeName);
 
   fs.mkdirSync(worktreesDir, { recursive: true });
 

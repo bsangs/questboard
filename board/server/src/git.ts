@@ -10,8 +10,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { renderTemplate } from "@questboard/core";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
+import { getConfig } from "./config.js";
 
 const execFileP = promisify(execFile);
 
@@ -66,12 +68,28 @@ export async function runGit(cwd: string, args: string[], timeoutMs = 30_000): P
 
 export const gitMain = (args: string[], timeoutMs?: number) => runGit(env.BOARD_ROOT, args, timeoutMs);
 
+function safeRelativeTemplate(template: string, values: Record<string, string>): string {
+  const rendered = renderTemplate(template, values).replace(/\\/g, "/");
+  const parts = rendered.split("/");
+  if (
+    rendered.trim() === "" ||
+    rendered.startsWith("/") ||
+    parts.some((part) => part === "..")
+  ) {
+    throw new Error(`template rendered outside worktree root: ${rendered}`);
+  }
+  return rendered;
+}
+
 export function worktreePathFor(cardId: string): string {
-  return join(env.BOARD_WORKTREES, `card-${cardId}`);
+  return join(
+    env.BOARD_WORKTREES,
+    safeRelativeTemplate(getConfig().git.worktree_template, { card_id: cardId }),
+  );
 }
 
 export function workerBranchFor(cardId: string): string {
-  return `worker/card-${cardId}`;
+  return renderTemplate(getConfig().git.worker_branch_template, { card_id: cardId });
 }
 
 async function configuredBaseBranch(): Promise<string> {

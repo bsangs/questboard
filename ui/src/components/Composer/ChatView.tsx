@@ -57,6 +57,7 @@ const STATUS_STYLE: Record<
 
 export function ComposerChatView({ threadId }: Props) {
   const active = useBoard((s) => s.composerActive);
+  const baseBranch = useBoard((s) => s.config?.git?.base_branch ?? "main");
   const draft = useBoard((s) => s.composerDraft);
   const pushToast = useBoard((s) => s.pushToast);
   // Authoritative "claude is currently working on a turn" flag. Comes
@@ -104,7 +105,7 @@ export function ComposerChatView({ threadId }: Props) {
   const status: ComposerProcessStatus = isThisThread ? active.status : "idle";
   const inTokens = isThisThread ? active.input_tokens : 0;
   const outTokens = isThisThread ? active.output_tokens : 0;
-  // Commits behind origin/main inside the composer worktree. null = not
+  // Commits behind the configured base branch inside the composer worktree. null = not
   // computed yet (no worktree, or compute failed); 0 = up to date; >=1 =
   // show the orange "↑N behind" chip + Sync button.
   const behindMain = isThisThread ? active.behind_main ?? null : null;
@@ -279,16 +280,16 @@ export function ComposerChatView({ threadId }: Props) {
           <>
             <span
               className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-mono text-[10.5px] font-medium text-amber-800 ring-1 ring-inset ring-amber-200"
-              title={`Worktree is ${behindMain} commit${behindMain === 1 ? "" : "s"} behind origin/main`}
+              title={`Worktree is ${behindMain} commit${behindMain === 1 ? "" : "s"} behind ${baseBranch}`}
             >
-              ↑{behindMain} behind main
+              ↑{behindMain} behind {baseBranch}
             </span>
             <button
               type="button"
               onClick={onSyncMain}
               disabled={syncing}
               className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11.5px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-              title="Hard-reset the worktree to origin/main"
+              title={`Hard-reset the worktree to ${baseBranch}`}
             >
               {syncing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

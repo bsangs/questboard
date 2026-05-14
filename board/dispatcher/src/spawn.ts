@@ -24,18 +24,39 @@ import {
 import { runCommandHook } from "./util/hooks.js";
 import {
   composeSystemPrompt,
+  type HelperAuth,
   readBaseBranch,
   readBasePrompt,
+  readHelperAuth,
   readHelperEnvironment,
   readMergeCommands,
   readRolePromptAppend,
   readScope,
   readToolGuidance,
+  renderWorkerBranch,
+  renderWorkerWorktreeName,
 } from "./context.js";
 
 const WORKER_ALLOWED_TOOLS = ["Bash", "Read", "Write", "Edit", "Grep", "Glob"] as const;
 const REVIEWER_ALLOWED_TOOLS = ["Bash", "Read", "Grep", "Glob"] as const;
 const MERGER_ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Grep", "Glob"] as const;
+
+function helperProcessEnv(
+  cfg: DispatcherConfig,
+  auth: HelperAuth,
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...readHelperEnvironment(cfg),
+  };
+  delete out.ANTHROPIC_API_KEY;
+  delete out.ANTHROPIC_BASE_URL;
+  if (auth.authMode === "bare") {
+    if (auth.anthropicBaseUrl != null) out.ANTHROPIC_BASE_URL = auth.anthropicBaseUrl;
+    if (auth.anthropicApiKey != null) out.ANTHROPIC_API_KEY = auth.anthropicApiKey;
+  }
+  return out;
+}
 
 export type WorkerRole = "worker" | "reviewer" | "merger";
 
@@ -594,14 +615,13 @@ export async function spawnWorker(
   const parsed = parseCardMd(cardMd);
   const baseBranch = readBaseBranch(cfg);
 
-  // Prepare worktree (or reuse on resumption). Worker branches use
-  // worker/card-<id>.
-  const wipBranch = `worker/card-${card.id}`;
+  const wipBranch = renderWorkerBranch(cfg, card.id);
   const wt = await prepareWorktree({
     boardRoot: cfg.boardRoot,
     worktreesDir: cfg.worktreesDir,
     cardId: card.id,
     branch: wipBranch,
+    worktreeName: renderWorkerWorktreeName(cfg, card.id),
     baseBranch,
   });
 
@@ -665,20 +685,16 @@ export async function spawnWorker(
     role: "worker",
   });
 
+  const auth = readHelperAuth(cfg);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...readHelperEnvironment(cfg),
-    // In session mode we forward NO ANTHROPIC_* env so the child uses claude's
-    // login session. In bare mode we forward only what's actually set —
-    // ANTHROPIC_BASE_URL is optional even in bare mode (claude defaults to
-    // its built-in base URL when only the API key is present).
-    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
-    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    ...helperProcessEnv(cfg, auth),
     BOARD_ROOT: cfg.boardRoot,
     BOARD_SERVER_URL: cfg.serverUrl,
     BOARD_DATA: cfg.boardData,
     BOARD_WORKTREES: cfg.worktreesDir,
     CARD_ID: card.id,
+    BASE_BRANCH: baseBranch,
+    WIP_BRANCH: wipBranch,
     ATTEMPT: String(attempt),
   };
 
@@ -701,7 +717,7 @@ export async function spawnWorker(
     "-p",
     // `--bare` only when running in bare auth mode; in session mode we let
     // claude pick up the user's interactive login session. See AuthMode.
-    ...(cfg.authMode === "bare" ? ["--bare"] : []),
+    ...(auth.authMode === "bare" ? ["--bare"] : []),
     "--permission-mode",
     "bypassPermissions",
     "--append-system-prompt",
@@ -984,7 +1000,7 @@ export async function spawnReviewer(
 
   const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
   const parsed = parseCardMd(cardMd);
-  const wipBranch = `worker/card-${card.id}`;
+  const wipBranch = renderWorkerBranch(cfg, card.id);
   const baseBranch = readBaseBranch(cfg);
 
   const reviewerPromptPath = path.join(cfg.promptsDir, "reviewer.md");
@@ -1035,7 +1051,7 @@ export async function spawnReviewer(
   const args: string[] = [
     "-p",
     // See spawnWorker for auth-mode rationale.
-    ...(cfg.authMode === "bare" ? ["--bare"] : []),
+    ...(readHelperAuth(cfg).authMode === "bare" ? ["--bare"] : []),
     "--permission-mode",
     "bypassPermissions",
     "--append-system-prompt",
@@ -1056,17 +1072,15 @@ export async function spawnReviewer(
     spawnMessage,
   ];
 
+  const auth = readHelperAuth(cfg);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...readHelperEnvironment(cfg),
-    // See spawnWorker for auth-mode rationale.
-    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
-    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    ...helperProcessEnv(cfg, auth),
     BOARD_ROOT: cfg.boardRoot,
     BOARD_SERVER_URL: cfg.serverUrl,
     BOARD_DATA: cfg.boardData,
     BOARD_WORKTREES: cfg.worktreesDir,
     CARD_ID: card.id,
+    BASE_BRANCH: baseBranch,
     WIP_BRANCH: wipBranch,
     ATTEMPT: String(attempt),
   };
@@ -1137,6 +1151,7 @@ function buildMergerMessage(args: {
   description: string;
   wipBranch: string;
   baseBranch: string;
+  worktreePath: string;
   mergeCommands: MergeCommandsConfig;
   comments: Comment[];
 }): string {
@@ -1145,6 +1160,7 @@ function buildMergerMessage(args: {
     baseBranch: args.baseBranch,
     branch: args.wipBranch,
     cardId: args.id,
+    worktreePath: args.worktreePath,
   });
   return [
     `# Card ${args.id}: ${args.title} — MERGE`,
@@ -1198,7 +1214,7 @@ function buildMergerMessage(args: {
 
 function formatMergeCommands(
   commands: MergeCommandsConfig,
-  vars: { baseBranch: string; branch: string; cardId: string },
+  vars: { baseBranch: string; branch: string; cardId: string; worktreePath: string },
 ): string {
   return commands
     .map((step, index) => {
@@ -1208,7 +1224,7 @@ function formatMergeCommands(
             .replaceAll("{base_branch}", vars.baseBranch)
             .replaceAll("{wip_branch}", vars.branch)
             .replaceAll("{card_id}", vars.cardId)
-            .replaceAll("{worktree_path}", `.questboard/worktrees/card-${vars.cardId}`)
+            .replaceAll("{worktree_path}", vars.worktreePath)
         : "(skip)";
       const required = step.required ? "required" : "optional";
       return `# ${index + 1}. ${step.label} (${required})\n${rendered}`;
@@ -1229,7 +1245,8 @@ export async function spawnMerger(
 
   const cardMd = fs.readFileSync(path.join(cfg.cardsDir, card.id, "card.md"), "utf8");
   const parsed = parseCardMd(cardMd);
-  const wipBranch = `worker/card-${card.id}`;
+  const wipBranch = renderWorkerBranch(cfg, card.id);
+  const baseBranch = readBaseBranch(cfg);
 
   const mergerPromptPath = path.join(cfg.promptsDir, "merger.md");
   const rolePrompt = fs.readFileSync(mergerPromptPath, "utf8");
@@ -1244,7 +1261,6 @@ export async function spawnMerger(
   const conversation = readConversation(
     path.join(cfg.cardsDir, card.id, "comments.jsonl"),
   );
-  const baseBranch = readBaseBranch(cfg);
   const mergeCommands = readMergeCommands(cfg);
   const spawnMessage = buildMergerMessage({
     id: card.id,
@@ -1252,6 +1268,10 @@ export async function spawnMerger(
     description: parsed.description,
     wipBranch,
     baseBranch,
+    worktreePath: path.relative(
+      cfg.boardRoot,
+      path.join(cfg.worktreesDir, renderWorkerWorktreeName(cfg, card.id)),
+    ),
     mergeCommands,
     comments: conversation,
   });
@@ -1265,7 +1285,7 @@ export async function spawnMerger(
   const args: string[] = [
     "-p",
     // See spawnWorker for auth-mode rationale.
-    ...(cfg.authMode === "bare" ? ["--bare"] : []),
+    ...(readHelperAuth(cfg).authMode === "bare" ? ["--bare"] : []),
     "--permission-mode",
     "bypassPermissions",
     "--append-system-prompt",
@@ -1279,17 +1299,15 @@ export async function spawnMerger(
     spawnMessage,
   ];
 
+  const auth = readHelperAuth(cfg);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...readHelperEnvironment(cfg),
-    // See spawnWorker for auth-mode rationale.
-    ...(cfg.anthropicBaseUrl != null ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
-    ...(cfg.anthropicApiKey != null ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
+    ...helperProcessEnv(cfg, auth),
     BOARD_ROOT: cfg.boardRoot,
     BOARD_SERVER_URL: cfg.serverUrl,
     BOARD_DATA: cfg.boardData,
     BOARD_WORKTREES: cfg.worktreesDir,
     CARD_ID: card.id,
+    BASE_BRANCH: baseBranch,
     WIP_BRANCH: wipBranch,
     ATTEMPT: String(attempt),
   };

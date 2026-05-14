@@ -58,7 +58,7 @@ export function GeneralSettings({
             className="w-28 rounded border border-border-strong px-2 py-1 font-mono text-[12.5px]"
           />
           <p className="mt-1 text-[11.5px] text-ink-subtle">
-            Stored in config only. Legacy BOARD_CONCURRENCY is migrated once.
+            Stored in config only.
           </p>
         </div>
       </Section>

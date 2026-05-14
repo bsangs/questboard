@@ -10,9 +10,12 @@ import { createDecipheriv, createHash } from "node:crypto";
 import {
   BoardConfig,
   buildToolGuidanceSection,
+  renderTemplate,
+  type BoardConfig as BoardConfigT,
   type MergeCommandsConfig,
 } from "@questboard/core";
 import type { DispatcherConfig } from "./config.js";
+import type { AuthMode } from "./config.js";
 
 type HelperRole = "worker" | "reviewer" | "merger";
 export type StageCommandStage =
@@ -41,6 +44,12 @@ interface SecretStoreFile {
       ciphertext: string;
     }
   >;
+}
+
+export interface HelperAuth {
+  authMode: AuthMode;
+  anthropicBaseUrl: string | null;
+  anthropicApiKey: string | null;
 }
 
 function readConfigJson(cfg: DispatcherConfig): Record<string, unknown> {
@@ -190,6 +199,23 @@ export function readHelperEnvironment(cfg: DispatcherConfig): Record<string, str
   return out;
 }
 
+export function readHelperAuth(cfg: DispatcherConfig): HelperAuth {
+  const parsed = BoardConfig.safeParse(readConfigJson(cfg));
+  const bareEnabled = parsed.success ? parsed.data.auth.bare_enabled : false;
+  if (!bareEnabled || cfg.anthropicApiKey == null) {
+    return {
+      authMode: "session",
+      anthropicBaseUrl: null,
+      anthropicApiKey: null,
+    };
+  }
+  return {
+    authMode: "bare",
+    anthropicBaseUrl: cfg.anthropicBaseUrl,
+    anthropicApiKey: cfg.anthropicApiKey,
+  };
+}
+
 export function readStageCommand(
   cfg: DispatcherConfig,
   stage: StageCommandStage,
@@ -225,6 +251,43 @@ export function readBaseBranch(cfg: DispatcherConfig): string {
   const parsed = BoardConfig.safeParse(readConfigJson(cfg));
   if (parsed.success) return parsed.data.git.base_branch;
   return cfg.baseBranch ?? BoardConfig.parse({}).git.base_branch;
+}
+
+export function readGitConfig(cfg: DispatcherConfig): BoardConfigT["git"] {
+  const parsed = BoardConfig.safeParse(readConfigJson(cfg));
+  if (parsed.success) return parsed.data.git;
+  return BoardConfig.parse({}).git;
+}
+
+function renderSafeRelativeTemplate(
+  template: string,
+  values: Record<string, string>,
+): string {
+  const rendered = renderTemplate(template, values).replace(/\\/g, "/");
+  const parts = rendered.split("/");
+  if (
+    rendered.trim() === "" ||
+    rendered.startsWith("/") ||
+    parts.some((part) => part === "..")
+  ) {
+    throw new Error(`template rendered outside worktree root: ${rendered}`);
+  }
+  return rendered;
+}
+
+export function renderWorkerBranch(cfg: DispatcherConfig, cardId: string): string {
+  return renderTemplate(readGitConfig(cfg).worker_branch_template, {
+    card_id: cardId,
+  });
+}
+
+export function renderWorkerWorktreeName(
+  cfg: DispatcherConfig,
+  cardId: string,
+): string {
+  return renderSafeRelativeTemplate(readGitConfig(cfg).worktree_template, {
+    card_id: cardId,
+  });
 }
 
 /**

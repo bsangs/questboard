@@ -27,6 +27,7 @@ import { ComposerMessage, type ComposerPendingToolUse } from "@questboard/core";
 import {
   appendMessage,
   composerPaths,
+  getThread,
   recordPending,
 } from "./threads.js";
 import { awaitDecision } from "./gate.js";
@@ -88,7 +89,7 @@ export function mcpConfigPathFor(threadId: string): string {
 // ─── Internal HTTP route: helper → server tool-call seam ─────────────────────
 
 const ToolCallBody = z.object({
-  thread_id: z.string().min(1),
+  thread_id: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
   name: z.enum(["make_card", "save_plan"]),
   // Claude validates against our advertised JSON Schema before sending, so
   // we accept the input verbatim here and let gate.ts re-validate via the
@@ -103,6 +104,12 @@ export async function composerMcpRoutes(app: FastifyInstance): Promise<void> {
       body = ToolCallBody.parse(req.body);
     } catch (err) {
       reply.code(400).send({ ok: false, reason: `bad request: ${(err as Error).message}` });
+      return;
+    }
+    try {
+      getThread(body.thread_id);
+    } catch {
+      reply.code(404).send({ ok: false, reason: `unknown thread: ${body.thread_id}` });
       return;
     }
 

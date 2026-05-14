@@ -3,6 +3,7 @@ import type { StageCommandPhase, StageCommandStage } from "@questboard/core";
 import { getConfig } from "../config.js";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
+import { readSecret } from "../secrets.js";
 
 export interface RunCommandHookOpts {
   stage: StageCommandStage;
@@ -43,6 +44,7 @@ export async function runCommandHook(
     cwd: opts.cwd,
     env: {
       ...process.env,
+      ...configuredEnvironment(),
       ...(opts.env ?? {}),
       BOARD_ROOT: env.BOARD_ROOT,
       ...(opts.cardId ? { CARD_ID: opts.cardId } : {}),
@@ -63,6 +65,24 @@ export async function runCommandHook(
   if (result.ok) logger.info("stage_command_ok", payload);
   else logger.warn("stage_command_failed", payload);
   return true;
+}
+
+function configuredEnvironment(): Record<string, string> {
+  const cfg = getConfig();
+  const out: Record<string, string> = {};
+  for (const item of cfg.environment.env) out[item.name] = item.value;
+  for (const item of cfg.environment.secret_env) {
+    try {
+      const value = readSecret(item.secret_ref);
+      if (value != null) out[item.name] = value;
+    } catch (err) {
+      logger.warn("stage_command_secret_env_failed", {
+        name: item.name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return out;
 }
 
 function runShell(

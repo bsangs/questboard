@@ -374,6 +374,7 @@ function DrawerBody({
   const setHistory = useBoard((s) => s.setHistory);
   const patchCardLocal = useBoard((s) => s.patchCard);
   const pushToast = useBoard((s) => s.pushToast);
+  const baseBranch = useBoard((s) => s.config?.git?.base_branch ?? "main");
 
   const [full, setFull] = useState<Card | null>(null);
   const [stages, setStages] = useState<CardStage[]>([]);
@@ -1020,7 +1021,7 @@ function DrawerBody({
                   withBusy(async () => {
                     if (
                       !confirm(
-                        `This card's code is already in origin/main${
+                        `This card's code is already in ${baseBranch}${
                           card.merged_sha ? ` @ ${card.merged_sha.slice(0, 12)}` : ""
                         }. Cancelling marks it as no longer tracked but does NOT revert the code. Continue?`,
                       )
@@ -1040,7 +1041,7 @@ function DrawerBody({
                 }
                 disabled={busy}
                 className="inline-flex items-center gap-1 rounded px-2 py-1 text-red-600 hover:bg-red-50"
-                title="Cancel tracking; merged code stays on origin/main"
+                title={`Cancel tracking; merged code stays on ${baseBranch}`}
               >
                 <CornerUpLeft className="h-3.5 w-3.5" /> Cancel card
               </button>
@@ -1644,6 +1645,7 @@ function StuckBanner({
   onForceDone: () => void;
   busy: boolean;
 }) {
+  const baseBranch = useBoard((s) => s.config?.git?.base_branch ?? "main");
   const isMerged = card.merged_sha != null;
 
   if (!isMerged) {
@@ -1688,7 +1690,7 @@ function StuckBanner({
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
         Stuck — code already on{" "}
         <code className="rounded bg-surface px-1 py-0.5 font-mono text-[10.5px]">
-          origin/main
+          {baseBranch}
         </code>{" "}
         @ <span className="font-mono">{sha12}</span>
       </div>

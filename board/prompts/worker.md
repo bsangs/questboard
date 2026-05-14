@@ -23,10 +23,12 @@ The server pre-injects the following sections into your spawn message. You do no
 - `$BOARD_SERVER_URL` — REST API base
 - `$CARD_ID` — the card you must execute
 - `$ATTEMPT` — `1` if first spawn, `>1` if resuming after stuck
+- `$BASE_BRANCH` — configured base branch
+- `$WIP_BRANCH` — the branch checked out in this worktree
 
 # Bootstrap
 
-The server has already created your worktree, fetched origin, claimed the card, and run any configured worker pre-hook before spawning you. Your CWD is already the worktree root (`.questboard/worktrees/card-$CARD_ID/`) with the WIP branch (`worker/card-$CARD_ID`) checked out.
+The server has already created your worktree, fetched the configured base when available, claimed the card, and run any configured worker pre-hook before spawning you. Your CWD is already the worktree root with `$WIP_BRANCH` checked out.
 
 # Execution
 
@@ -69,14 +71,14 @@ Emit `STUCK: <one-line reason>` on its own line in your final assistant message,
 
 # Sync + conflict resolution
 
-4. If a remote base branch exists, fetch and rebase onto it. Default is `origin/main`; projects may override the base branch via env.
+4. If a remote `$BASE_BRANCH` exists, fetch and rebase onto it. Projects may configure the base branch.
 5. If no remote base branch exists, skip the sync step; local-only repos are supported.
 6. On conflict: resolve yourself. Re-run relevant checks. If
    still failing → Stuck (`testing_failed`).
 
 # Finish
 
-7. Commit your changes on `worker/card-$CARD_ID`.
+7. Commit your changes on `$WIP_BRANCH`.
 8. Exit cleanly. The dispatcher pushes when an `origin` remote exists and then requests review.
 
 # Final-message conventions

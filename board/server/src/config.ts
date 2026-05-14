@@ -15,7 +15,6 @@ let cached: BoardConfigT | null = null;
 
 function defaults(): BoardConfigT {
   return BoardConfig.parse({
-    concurrency_limit: legacyConcurrencyFromEnv() ?? undefined,
     git: {
       base_branch: env.BOARD_BASE_BRANCH ?? undefined,
     },
@@ -40,13 +39,6 @@ function withDerived(cfg: BoardConfigT): BoardConfigT {
   };
 }
 
-function legacyConcurrencyFromEnv(): number | undefined {
-  const raw = process.env.BOARD_CONCURRENCY;
-  if (raw == null || raw.trim() === "") return undefined;
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
 function normalizeRawConfig(raw: unknown): BoardConfigT {
   const input =
     raw && typeof raw === "object" && !Array.isArray(raw)
@@ -54,8 +46,7 @@ function normalizeRawConfig(raw: unknown): BoardConfigT {
       : {};
 
   if (input.concurrency_limit == null) {
-    input.concurrency_limit =
-      input.concurrency ?? legacyConcurrencyFromEnv() ?? undefined;
+    input.concurrency_limit = input.concurrency ?? undefined;
   }
 
   const git =
@@ -206,9 +197,44 @@ export function writeConfig(next: BoardConfigT): void {
 
 export function patchConfig(patch: Partial<BoardConfigT>): BoardConfigT {
   const cur = getConfig();
-  // Drop `telegram_configured` from the merge input — it's not user-settable.
-  const { telegram_configured: _ignored, ...curStripped } = cur;
-  const next = BoardConfig.parse({ ...curStripped, ...patch });
+  const curStripped = stripDerived(cur);
+  const next = BoardConfig.parse({
+    ...curStripped,
+    ...patch,
+    git: patch.git ? { ...curStripped.git, ...patch.git } : curStripped.git,
+    commands: patch.commands
+      ? {
+          ...curStripped.commands,
+          ...patch.commands,
+          stages: patch.commands.stages
+            ? { ...curStripped.commands.stages, ...patch.commands.stages }
+            : curStripped.commands.stages,
+        }
+      : curStripped.commands,
+    roles: patch.roles
+      ? {
+          ...curStripped.roles,
+          ...patch.roles,
+          worker: patch.roles.worker
+            ? { ...curStripped.roles.worker, ...patch.roles.worker }
+            : curStripped.roles.worker,
+          reviewer: patch.roles.reviewer
+            ? { ...curStripped.roles.reviewer, ...patch.roles.reviewer }
+            : curStripped.roles.reviewer,
+          merger: patch.roles.merger
+            ? { ...curStripped.roles.merger, ...patch.roles.merger }
+            : curStripped.roles.merger,
+        }
+      : curStripped.roles,
+    environment: patch.environment
+      ? { ...curStripped.environment, ...patch.environment }
+      : curStripped.environment,
+    auth: patch.auth ? { ...curStripped.auth, ...patch.auth } : curStripped.auth,
+    notifications: patch.notifications
+      ? { ...curStripped.notifications, ...patch.notifications }
+      : curStripped.notifications,
+    files: patch.files ? { ...curStripped.files, ...patch.files } : curStripped.files,
+  });
   writeConfig(next);
   return getConfig();
 }

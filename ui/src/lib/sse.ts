@@ -99,6 +99,7 @@ export function useSse(handler: Handler, opts: UseSseOpts = {}) {
         "composer_message_appended",
         "composer_tool_pending",
         "composer_tool_resolved",
+        "composer_turn_state",
       ];
       for (const name of NAMED_EVENTS) {
         es.addEventListener(name, dispatch as EventListener);

@@ -70,8 +70,19 @@ export class ServerApi {
    * Dispatcher-driven claim (state-machine.md T3 trigger=dispatcher). Called
    * right after spawning a worker so the card flips to in_progress.
    */
-  async claimForWorker(cardId: string, pid: number, attempt: number): Promise<PostResult> {
-    const res = await this.post(`/api/cards/${cardId}/claim`, { pid, attempt });
+  async claimForWorker(
+    cardId: string,
+    pid: number,
+    attempt: number,
+    worktree: string,
+    wipBranch: string,
+  ): Promise<PostResult> {
+    const res = await this.post(`/api/cards/${cardId}/claim`, {
+      pid,
+      attempt,
+      worktree,
+      wip_branch: wipBranch,
+    });
     if (res.status >= 400) {
       throw new Error(`claim failed: ${res.status} ${JSON.stringify(res.body)}`);
     }
