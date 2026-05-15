@@ -31,6 +31,8 @@
     "board/worker-tools/bin/**",
     "board/prompts/**",
     "board/core/src/schema.sql",
+    "ecosystem.config.cjs",
+    "scripts/sanitize-next-package.mjs",
     "ui/.next/BUILD_ID",
     "ui/.next/*.json",
     "ui/.next/*.js",
@@ -38,8 +40,8 @@
     "ui/.next/static/**",
     "ui/.next/types/**",
     "ui/.next/package.json",
+    "ui/next.config.mjs",
     "ui/public/**",
-    "ui/package.json",
     "README.md",
     "LICENSE"
   ],
@@ -49,7 +51,7 @@
     "dev:dispatcher": "pnpm --filter ./board/dispatcher dev",
     "dev:ui": "pnpm --filter ./ui dev",
     "typecheck": "pnpm -r --filter \"./board/*\" typecheck",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build && node scripts/sanitize-next-package.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",

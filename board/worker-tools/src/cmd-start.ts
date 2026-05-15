@@ -10,7 +10,7 @@
  *     symmetric teardown for this mode.
  *
  * Does NOT use PM2. PM2 stays available as an optional, user-driven
- * path via `questboard/ecosystem.config.js`.
+ * path via `questboard/ecosystem.config.cjs`.
  *
  * Out of scope:
  *   - log rotation, port-conflict resolution, auto-restart
@@ -74,6 +74,15 @@ function collectStrings(value: unknown, out: string[] = []): string[] {
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const v = env[name];
   return v != null && v.trim() !== "" ? v : undefined;
+}
+
+function parsePort(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = envValue(env, name);
+  const value = raw == null ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`${name} must be an integer port between 1 and 65535`);
+  }
+  return value;
 }
 
 function findGitRoot(start: string): string | null {
@@ -282,6 +291,54 @@ function ensureUiBuild(uiCwd: string, uiBin: string, env: NodeJS.ProcessEnv): vo
   }
 }
 
+function ensureUiApiRewrite(uiCwd: string, serverPort: number): void {
+  const manifestPath = join(uiCwd, ".next", "routes-manifest.json");
+  const manifest = readJsonFile(manifestPath);
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return;
+  }
+
+  const nextDestination = `http://127.0.0.1:${serverPort}/api/:path*`;
+  let changed = false;
+  const rewrites = (manifest as { rewrites?: unknown }).rewrites;
+  if (rewrites && typeof rewrites === "object" && !Array.isArray(rewrites)) {
+    for (const group of ["beforeFiles", "afterFiles", "fallback"]) {
+      const entries = (rewrites as Record<string, unknown>)[group];
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const record = entry as Record<string, unknown>;
+        if (record.source !== "/api/:path*") continue;
+        if (record.destination === nextDestination) continue;
+        record.destination = nextDestination;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+  }
+}
+
+function ensureUiRequiredServerFiles(uiCwd: string, appRoot: string): void {
+  const replacements = [
+    ["__QUESTBOARD_UI_DIR__", uiCwd],
+    ["__QUESTBOARD_APP_ROOT__", appRoot],
+  ] as const;
+  for (const manifestPath of [
+    join(uiCwd, ".next", "required-server-files.json"),
+    join(uiCwd, ".next", "required-server-files.js"),
+  ]) {
+    if (!existsSync(manifestPath)) continue;
+    let text = readFileSync(manifestPath, "utf8");
+    for (const [from, to] of replacements) {
+      text = text.split(from).join(to);
+    }
+    writeFileSync(manifestPath, text, "utf8");
+  }
+}
+
 function streamLines(
   source: NodeJS.ReadableStream | null,
   role: Role,
@@ -329,8 +386,18 @@ export async function cmdStart(opts: CmdStartOptions): Promise<void> {
   // logger still writes to .questboard/data/logs/server.jsonl in parallel.
   mergedEnv.BOARD_LOG_STDOUT = process.env.BOARD_LOG_STDOUT ?? "1";
 
-  const serverPort = Number(envValue(mergedEnv, "BOARD_SERVER_PORT") ?? 3031);
-  const uiPort = Number(envValue(mergedEnv, "BOARD_UI_PORT") ?? 3030);
+  let serverPort: number;
+  let uiPort: number;
+  try {
+    serverPort = parsePort(mergedEnv, "BOARD_SERVER_PORT", 3031);
+    uiPort = parsePort(mergedEnv, "BOARD_UI_PORT", 3030);
+  } catch (err) {
+    process.stderr.write(
+      `questboard: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exit(1);
+    return;
+  }
 
   const wantServer = opts.server !== false;
   const wantUi = opts.ui !== false;
@@ -369,6 +436,8 @@ export async function cmdStart(opts: CmdStartOptions): Promise<void> {
   }
   if (wantUi && uiBin != null) {
     ensureUiBuild(uiCwd, uiBin, mergedEnv);
+    ensureUiRequiredServerFiles(uiCwd, appRoot);
+    ensureUiApiRewrite(uiCwd, serverPort);
   }
 
   const specs: ChildSpec[] = [];

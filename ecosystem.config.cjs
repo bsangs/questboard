@@ -1,10 +1,10 @@
 /**
  * PM2 ecosystem for questboard (self-hosted dev configuration).
  *
- * Three long-running processes — server, dispatcher, ui — defined in one
- * file so a single `pm2 start questboard/ecosystem.config.js` brings the
- * whole stack up. Workers (ephemeral Claude Code processes) are NOT
- * managed by PM2; the dispatcher spawns them via child_process.
+ * Three long-running questboard start processes — server, dispatcher, ui —
+ * defined in one file so a single `pm2 start questboard/ecosystem.config.cjs`
+ * brings the whole stack up. Workers (ephemeral Claude Code processes) are
+ * NOT managed by PM2; the dispatcher spawns them via child_process.
  *
  * Project / app layout (companion-app model):
  *   appRoot      = this directory (questboard/)
@@ -34,7 +34,6 @@ function loadEnv(file) {
     if (eq < 0) continue;
     const key = line.slice(0, eq).trim();
     let value = line.slice(eq + 1).trim();
-    // Strip optional surrounding quotes.
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -48,10 +47,11 @@ function loadEnv(file) {
 
 const appRoot = __dirname;
 const projectRoot = path.dirname(appRoot);
+const questboardBin = path.join(appRoot, "board/worker-tools/bin/questboard.mjs");
 
 const envCandidates = [
   path.join(projectRoot, ".questboard", ".env"),
-  path.join(appRoot, ".env"), // package-local env fallback
+  path.join(appRoot, ".env"),
 ];
 let envFile = null;
 let fileEnv = {};
@@ -64,18 +64,14 @@ for (const cand of envCandidates) {
 }
 
 const env = { ...process.env, ...fileEnv, NODE_ENV: "production" };
-
-// Default cwd for child processes is projectRoot so relative BOARD_DATA /
-// BOARD_WORKTREES values (e.g. ".questboard/data") resolve there. Server
-// and dispatcher also resolve everything explicitly against BOARD_ROOT, so
-// cwd is just a safe default.
 const childCwd = projectRoot;
 
 module.exports = {
   apps: [
     {
       name: "questboard-server",
-      script: path.join(appRoot, "board/server/dist/main.js"),
+      script: process.execPath,
+      args: [questboardBin, "start", "--no-dispatcher", "--no-ui"],
       cwd: childCwd,
       env,
       autorestart: true,
@@ -84,7 +80,8 @@ module.exports = {
     },
     {
       name: "questboard-dispatcher",
-      script: path.join(appRoot, "board/dispatcher/dist/main.js"),
+      script: process.execPath,
+      args: [questboardBin, "start", "--no-server", "--no-ui"],
       cwd: childCwd,
       env,
       autorestart: true,
@@ -93,9 +90,9 @@ module.exports = {
     },
     {
       name: "questboard-ui",
-      script: path.join(appRoot, "ui/node_modules/next/dist/bin/next"),
-      args: "start -p " + (env.BOARD_UI_PORT || 3030),
-      cwd: path.join(appRoot, "ui"),
+      script: process.execPath,
+      args: [questboardBin, "start", "--no-server", "--no-dispatcher"],
+      cwd: childCwd,
       env,
       autorestart: true,
       max_restarts: 10,
@@ -103,7 +100,6 @@ module.exports = {
   ],
 };
 
-// Surface which env file was picked up (visible in PM2 startup logs).
 if (envFile) {
   process.stdout.write(`[ecosystem] loaded env from ${envFile}\n`);
 } else {

@@ -222,7 +222,7 @@ npx questboard start --no-server --no-dispatcher --detach
 
 ### PM2
 
-PM2 is optional. `questboard start --detach` is the recommended built-in supervisor for local use. If you already standardize on PM2, an example `ecosystem.config.js` ships in the package.
+PM2 is optional. `questboard start --detach` is the recommended built-in supervisor for local use. If you already standardize on PM2, an example `ecosystem.config.cjs` ships in the package.
 
 ## Development
 
